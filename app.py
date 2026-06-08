@@ -673,6 +673,119 @@ def update_asset_resolution(asset_no):
     _asset_cache['ts'] = 0
     return jsonify({'ok': True, 'asset_no': asset_no, 'resolution': resolution})
 
+@app.route('/api/dashboard/rental', methods=['GET'])
+def dashboard_rental():
+    """สถิติเครื่องเช่าสำหรับ Dashboard."""
+    from collections import defaultdict
+
+    data = fetch_assets_raw()
+    rentals = [r for r in data
+               if r.get('ownership') == 'เช่า'
+               and r['contract_status'] != 'returned']
+
+    today = date.today()
+
+    # summary
+    by_status = defaultdict(int)
+    for r in rentals:
+        by_status[r['contract_status']] += 1
+
+    total_monthly = sum(r['monthly_charge'] for r in rentals)
+
+    # แยก BU
+    bu_map = defaultdict(lambda: {'count': 0, 'monthly': 0.0})
+    for r in rentals:
+        code = r['emp_bu_code'] or '—'
+        bu_map[code]['count']   += 1
+        bu_map[code]['monthly'] += r['monthly_charge']
+    by_bu = sorted(
+        [{'bu_code': k, 'count': v['count'], 'monthly': v['monthly']} for k, v in bu_map.items()],
+        key=lambda x: -x['count']
+    )
+
+    # แยกแผนก (top 15)
+    dept_map = defaultdict(int)
+    for r in rentals:
+        dept = r['emp_dept'] or r['dept_sheet'] or '—'
+        dept_map[dept] += 1
+    by_dept = sorted(
+        [{'dept': k, 'count': v} for k, v in dept_map.items()],
+        key=lambda x: -x['count']
+    )[:15]
+
+    # timeline: สัญญาหมดรายเดือน (เฉพาะที่มี end_date, 18 เดือนข้างหน้า + ที่หมดแล้ว)
+    timeline_map = defaultdict(lambda: {'count': 0, 'monthly': 0.0})
+    for r in rentals:
+        if not r['end_date']:
+            continue
+        ym = r['end_date'][:7]   # "2025-09"
+        timeline_map[ym]['count']   += 1
+        timeline_map[ym]['monthly'] += r['monthly_charge']
+    timeline = sorted(
+        [{'month': k, 'count': v['count'], 'monthly': v['monthly']} for k, v in timeline_map.items()],
+        key=lambda x: x['month']
+    )
+
+    # urgent: expired + critical (เรียงวันหมดก่อน)
+    urgent = sorted(
+        [r for r in rentals if r['contract_status'] in ('expired', 'critical')],
+        key=lambda x: (x['days_remaining'] is None, x['days_remaining'] or 0)
+    )
+    urgent_out = [{
+        'asset_no':      r['asset_no'],
+        'computer_id':   r['computer_id'],
+        'model':         r['model'],
+        'brand':         r['brand'],
+        'user_name':     r['user_name'],
+        'emp_bu_code':   r['emp_bu_code'],
+        'emp_dept':      r['emp_dept'] or r['dept_sheet'],
+        'end_date':      r['end_date'],
+        'days_remaining': r['days_remaining'],
+        'contract_status': r['contract_status'],
+        'monthly_charge': r['monthly_charge'],
+        'resolution':    r.get('resolution', 'pending'),
+    } for r in urgent]
+
+    # ---- anomaly: เครื่องเช่าที่ไม่มีข้อมูลสัญญา (status=unknown) ----
+    def _mini(r):
+        return {
+            'computer_id':    r['computer_id'],
+            'serial_no':      r['serial_no'],
+            'brand':          r['brand'],
+            'model':          r['model'],
+            'device_type':    r.get('asset_type', ''),
+            'user_name':      r['user_name'],
+            'emp_bu_code':    r['emp_bu_code'],
+            'emp_dept':       r['emp_dept'] or r.get('dept_sheet', ''),
+            'monthly_charge': r['monthly_charge'],
+            'end_date':       r['end_date'],
+        }
+
+    no_contract = [_mini(r) for r in rentals if r['contract_status'] == 'unknown']
+    no_contract.sort(key=lambda x: (x['emp_bu_code'] or '่', x['emp_dept'] or '่'))
+
+    # ---- anomaly: เครื่องเช่าที่ไม่มี emp_bu_code (= ยังไม่ link กับพนักงานใน HR) ----
+    # แบ่งย่อย: has_dept = มีแผนกจาก Sheets แต่ไม่มี BU / no_dept = ไม่มีข้อมูลเลย
+    no_bu_list = [r for r in rentals if not r['emp_bu_code']]
+    no_bu = []
+    for r in sorted(no_bu_list, key=lambda x: x['computer_id'] or ''):
+        m = _mini(r)
+        m['has_dept'] = bool(r['emp_dept'] or r.get('dept_sheet', ''))
+        no_bu.append(m)
+
+    return jsonify({
+        'total_rental':   len(rentals),
+        'total_monthly':  total_monthly,
+        'by_status':      dict(by_status),
+        'by_bu':          by_bu,
+        'by_dept':        by_dept,
+        'timeline':       timeline,
+        'urgent':         urgent_out,
+        'no_contract':    no_contract,
+        'no_bu':          no_bu,
+    })
+
+
 @app.route('/api/assets/meta', methods=['GET'])
 def asset_meta():
     data = fetch_assets_raw()
