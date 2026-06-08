@@ -2,3 +2,12 @@ __pycache__/
 *.pyc
 *.pyo
 .env
+
+# ข้อมูลจริง — ไม่ push ขึ้น GitHub
+employees.db
+edevice_assets.json
+employees_extracted.json
+amarin_orgchart_full.html
+
+# Claude session
+.claude/

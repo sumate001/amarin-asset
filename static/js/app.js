@@ -6,7 +6,7 @@ let buMap       = {};  // bu_code -> bu name
 
 // ---- Asset State ----
 let assetLoaded = false;
-let assetFilters = { q: '', customer: '', type: '', bu: '', status: '', ownership: '' };
+let assetFilters = { q: '', type: '', bu: '', status: '', ownership: '' };
 
 // ---- Transfer State ----
 let transferFromEmpId = null;
@@ -346,12 +346,6 @@ async function loadStats() {
 async function loadAssetMeta() {
   const d = await api('/api/assets/meta');
 
-  const custSel = document.getElementById('a-filter-customer');
-  d.customers.forEach(c => {
-    const short = c.name.replace('อมรินทร์ ', '').replace(' จำกัด', '').replace(' (มหา', '');
-    custSel.insertAdjacentHTML('beforeend', `<option value="${c.code}">${short}</option>`);
-  });
-
   const typeSel = document.getElementById('a-filter-type');
   d.types.forEach(t => typeSel.insertAdjacentHTML('beforeend', `<option value="${t}">${t}</option>`));
 
@@ -362,12 +356,11 @@ async function loadAssetMeta() {
   });
 
   // wire up filter events
-  ['a-search', 'a-filter-customer', 'a-filter-type', 'a-filter-bu', 'a-filter-status', 'a-filter-ownership'].forEach(id => {
+  ['a-search', 'a-filter-type', 'a-filter-bu', 'a-filter-status', 'a-filter-ownership'].forEach(id => {
     const el = document.getElementById(id);
     const evt = el.tagName === 'INPUT' ? 'input' : 'change';
     el.addEventListener(evt, () => {
       assetFilters.q         = document.getElementById('a-search').value.trim();
-      assetFilters.customer  = document.getElementById('a-filter-customer').value;
       assetFilters.type      = document.getElementById('a-filter-type').value;
       assetFilters.bu        = document.getElementById('a-filter-bu').value;
       assetFilters.status    = document.getElementById('a-filter-status').value;
@@ -380,7 +373,6 @@ async function loadAssetMeta() {
 async function loadAssets(refresh = false) {
   const params = new URLSearchParams({
     q:         assetFilters.q,
-    customer:  assetFilters.customer,
     type:      assetFilters.type,
     bu:        assetFilters.bu,
     status:    assetFilters.status,
@@ -860,7 +852,6 @@ function exportAssets() {
   const params = new URLSearchParams({
     status:   assetFilters.status,
     type:     assetFilters.type,
-    customer: assetFilters.customer,
     bu:       assetFilters.bu,
   });
   window.location = '/api/assets/export?' + params;
