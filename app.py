@@ -474,7 +474,9 @@ def fetch_assets_raw(force=False):
             # ── ส่วนกลาง detection ───────────────────────────────────
             # 1) central_type จาก radio button (หลัง re-sync)
             # 2) fallback: eDevice มีข้อมูลแต่ไม่มีชื่อพนักงานและรหัสพนักงาน → ส่วนกลาง
-            _central_type = (a_ed.get('central_type') or '').strip()
+            # strip HTML tags ออกก่อน (กรณี cache เก่ามี <font>...</font> ติดมา)
+            _central_raw = (a_ed.get('central_type') or '').strip()
+            _central_type = re.sub(r'<[^>]+>', '', _central_raw).strip()
             is_central = (
                 _central_type == 'ส่วนกลาง'
                 or (not _central_type and not ed_emp_name and not ed_emp_code)
@@ -1288,7 +1290,8 @@ def _parse_computer_detail(text, cid):
                     if radio.has_attr('checked'):
                         sibling = radio.next_sibling
                         if sibling:
-                            t = str(sibling).strip()
+                            # อาจเป็น NavigableString หรือ Tag (<font>ส่วนกลาง</font>)
+                            t = sibling.get_text(strip=True) if hasattr(sibling, 'get_text') else str(sibling).strip()
                             if t:
                                 data['central_type'] = t
                                 break
@@ -1420,7 +1423,8 @@ def _parse_mac_detail(text, cid):
                     if radio.has_attr('checked'):
                         sibling = radio.next_sibling
                         if sibling:
-                            t = str(sibling).strip()
+                            # อาจเป็น NavigableString หรือ Tag (<font>ส่วนกลาง</font>)
+                            t = sibling.get_text(strip=True) if hasattr(sibling, 'get_text') else str(sibling).strip()
                             if t:
                                 data['central_type'] = t
                                 break
