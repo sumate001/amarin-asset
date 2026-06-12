@@ -487,7 +487,7 @@ async function loadAssetMeta() {
   });
 
   // checkbox / dropdown ที่ filter ฝั่ง client — toggle ทันทีโดยไม่ fetch ใหม่
-  ['a-filter-return', 'a-filter-resigned', 'a-filter-no-owner', 'a-filter-central', 'a-filter-missing-edevice'].forEach(id => {
+  ['a-filter-resigned', 'a-filter-no-owner', 'a-filter-central', 'a-filter-missing-edevice'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => {
       if (_assetRawData) renderAssetTable(_assetRawData);
     });
@@ -554,7 +554,6 @@ async function loadAssets(refresh = false) {
 }
 
 function renderAssetTable(d) {
-  const onlyReturn    = document.getElementById('a-filter-return')?.checked ?? false;
   const onlyResigned  = document.getElementById('a-filter-resigned')?.checked ?? false;
   const onlyNoOwner        = document.getElementById('a-filter-no-owner')?.checked ?? false;
   const onlyCentral        = document.getElementById('a-filter-central')?.checked ?? false;
@@ -563,10 +562,6 @@ function renderAssetTable(d) {
 
   let assets = d.assets;
   if (edStatusF)   assets = assets.filter(a => (a.edevice_status || '').toLowerCase() === edStatusF);
-  if (onlyReturn)  assets = assets.filter(a =>
-    (a.edevice_status || '').toLowerCase() === 'return' ||
-    a.contract_status === 'returned'
-  );
   if (onlyResigned)        assets = assets.filter(a => a.user_name && !a.employee_id && !a.is_central);
   if (onlyNoOwner)         assets = assets.filter(a => !a.user_name && !a.is_central);
   if (onlyCentral)         assets = assets.filter(a => a.is_central);
@@ -604,7 +599,6 @@ function renderAssetTable(d) {
   document.getElementById('a-ok').textContent        = sc.ok.toLocaleString();
   const filterTags = [];
   if (edStatusF)           filterTags.push(`eDevice: ${edStatusF}`);
-  if (onlyReturn)          filterTags.push(`เครื่อง Return`);
   if (onlyResigned)        filterTags.push(`เฉพาะไม่พบใน HR`);
   if (onlyNoOwner)         filterTags.push(`ไม่มีผู้ถือครอง`);
   if (onlyCentral)         filterTags.push(`🏢 ส่วนกลาง`);
