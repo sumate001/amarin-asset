@@ -621,8 +621,17 @@ function renderAssetTable(d) {
     `<span class="ri-filter-tag">✦ ${t}</span>`
   ).join('');
 
-  document.getElementById('a-result-info').innerHTML =
-    `${countHtml} &nbsp;·&nbsp; ${monthlyHtml}${tagsHtml ? ' &nbsp;' + tagsHtml : ''}`;
+  const riEl = document.getElementById('a-result-info');
+  riEl.innerHTML = `${countHtml} &nbsp;·&nbsp; ${monthlyHtml}${tagsHtml ? ' &nbsp;' + tagsHtml : ''}`;
+  if (filterTags.length > 0 || isFiltered) {
+    riEl.style.background = '#eff6ff';
+    riEl.style.borderBottom = '1px solid #bfdbfe';
+    riEl.style.borderTop = '2px solid #3b82f6';
+  } else {
+    riEl.style.background = '';
+    riEl.style.borderBottom = '';
+    riEl.style.borderTop = '';
+  }
 
   const tbody = document.getElementById('asset-tbody');
   const empty = document.getElementById('a-empty');
