@@ -52,9 +52,18 @@ header p { font-size: .75rem; opacity: .7; margin-top: 2px; }
 
 /* ---- Toolbar ---- */
 .toolbar {
-  background: #fff; border-bottom: 1px solid #e2e8f0;
+  background: #fff;
   padding: 10px 24px; display: flex; flex-wrap: wrap;
   gap: 8px; align-items: center; justify-content: space-between;
+}
+.toolbar-row1 {
+  border-bottom: 1px solid #e2e8f0;
+}
+.toolbar-row2 {
+  background: #f8fafc;
+  border-bottom: 2px solid #e2e8f0;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }
 .toolbar-left, .toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 

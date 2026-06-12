@@ -144,8 +144,8 @@
     </div>
   </div>
 
-  <!-- Toolbar -->
-  <div class="toolbar">
+  <!-- Toolbar: แถวบน = Search + Dropdowns -->
+  <div class="toolbar toolbar-row1">
     <div class="toolbar-left">
       <div class="search-wrap">
         <svg class="search-icon" viewBox="0 0 20 20"><circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.8" fill="none"/><line x1="12" y1="12" x2="17" y2="17" stroke="currentColor" stroke-width="1.8"/></svg>
@@ -153,8 +153,6 @@
       </div>
       <select id="a-filter-bu"><option value="">ทุก BU</option></select>
       <select id="a-filter-type"><option value="">ทุกประเภท</option></select>
-      <select id="a-filter-position"><option value="">ทุกตำแหน่ง</option></select>
-      <select id="a-filter-dept"><option value="">ทุกแผนก</option></select>
       <select id="a-filter-ownership">
         <option value="">ประเภทสัญญาทั้งหมด</option>
         <option value="เช่า">เช่า</option>
@@ -162,35 +160,51 @@
         <option value="⚠">⚠ ไม่ตรงกัน</option>
       </select>
       <select id="a-filter-status">
-        <option value="">ทุกสถานะ</option>
+        <option value="">ทุกสถานะสัญญา</option>
         <option value="expired">🔴 หมดแล้ว</option>
         <option value="critical">🟠 &lt; 90 วัน</option>
         <option value="warning">🟡 &lt; 180 วัน</option>
-        <option value="ok">🟢 อยู่ในระยะเวลาสัญญาเช่า</option>
+        <option value="ok">🟢 อยู่ในระยะสัญญา</option>
       </select>
-
       <select id="a-filter-ed-status">
-        <option value="">ทุก eDevice</option>
+        <option value="">ทุก eDevice status</option>
         <option value="active">● Active</option>
         <option value="expire">⚠ Expire</option>
         <option value="return">↩ Return</option>
         <option value="spare">◎ Spare</option>
         <option value="error">✕ Error</option>
       </select>
-      <label style="display:flex;align-items:center;gap:5px;font-size:.8rem;color:#64748b;cursor:pointer;white-space:nowrap;user-select:none">
+      <select id="a-filter-position"><option value="">ทุกตำแหน่ง</option></select>
+      <select id="a-filter-dept"><option value="">ทุกแผนก</option></select>
+    </div>
+    <div class="toolbar-right">
+      <span id="a-cache-info" style="font-size:.75rem;color:#94a3b8"></span>
+      <button class="btn btn-secondary" onclick="loadAssets(true)">
+        <svg viewBox="0 0 20 20" width="13" height="13"><path d="M4 10a6 6 0 1 1 1.5 4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><polyline points="1,10 4,13 7,10" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <!-- Toolbar: แถวล่าง = Checkboxes + Sync/Export -->
+  <div class="toolbar toolbar-row2">
+    <div class="toolbar-left" style="flex-wrap:wrap;gap:6px 14px">
+      <span style="font-size:.72rem;font-weight:600;color:#94a3b8;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;align-self:center">กรองพิเศษ</span>
+      <span style="width:1px;height:20px;background:#e2e8f0;align-self:center"></span>
+      <label style="display:flex;align-items:center;gap:5px;font-size:.8rem;color:#6366f1;cursor:pointer;white-space:nowrap;user-select:none">
         <input type="checkbox" id="a-filter-return"
                style="width:14px;height:14px;accent-color:#6366f1;cursor:pointer">
-        เครื่อง Return
+        ↩ เครื่อง Return
       </label>
       <label style="display:flex;align-items:center;gap:5px;font-size:.8rem;color:#ef4444;cursor:pointer;white-space:nowrap;user-select:none">
         <input type="checkbox" id="a-filter-resigned"
                style="width:14px;height:14px;accent-color:#ef4444;cursor:pointer">
-        เฉพาะไม่พบใน HR
+        ⚠ เฉพาะไม่พบใน HR
       </label>
       <label style="display:flex;align-items:center;gap:5px;font-size:.8rem;color:#f59e0b;cursor:pointer;white-space:nowrap;user-select:none">
         <input type="checkbox" id="a-filter-no-owner"
                style="width:14px;height:14px;accent-color:#f59e0b;cursor:pointer">
-        ไม่มีผู้ถือครอง
+        ❔ ไม่มีผู้ถือครอง
       </label>
       <label style="display:flex;align-items:center;gap:5px;font-size:.8rem;color:#0369a1;cursor:pointer;white-space:nowrap;user-select:none">
         <input type="checkbox" id="a-filter-central"
@@ -200,15 +214,10 @@
       <label style="display:flex;align-items:center;gap:5px;font-size:.8rem;color:#dc2626;cursor:pointer;white-space:nowrap;user-select:none">
         <input type="checkbox" id="a-filter-missing-edevice"
                style="width:14px;height:14px;accent-color:#dc2626;cursor:pointer">
-        ยังไม่บันทึกใน eDevice
+        ✕ ยังไม่บันทึกใน eDevice
       </label>
     </div>
     <div class="toolbar-right">
-      <span id="a-cache-info" style="font-size:.75rem;color:#94a3b8"></span>
-      <button class="btn btn-secondary" onclick="loadAssets(true)">
-        <svg viewBox="0 0 20 20" width="13" height="13"><path d="M4 10a6 6 0 1 1 1.5 4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><polyline points="1,10 4,13 7,10" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
-        Refresh
-      </button>
       <button class="btn btn-secondary" onclick="openEdeviceSyncModal()">
         <svg viewBox="0 0 20 20" width="14" height="14"><rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M7 10h6M10 7v6" stroke="currentColor" stroke-width="1.5"/></svg>
         Sync eDevice
