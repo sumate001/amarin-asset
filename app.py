@@ -296,8 +296,9 @@ def import_excel():
 
 # ---------- IT Assets (Google Sheets) ----------
 
-SHEETS_ID  = '***REMOVED-SHEETS_ID***'
-SHEETS_URL = f'https://docs.google.com/spreadsheets/d/{SHEETS_ID}/export?format=csv'
+SHEETS_ID         = '***REMOVED-SHEETS_ID***'
+SHEETS_URL        = f'https://docs.google.com/spreadsheets/d/{SHEETS_ID}/export?format=csv'
+SHEETS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwRYfZAOADCUx9ClgcmsKZgNQCd4Ym12quCO-fiMboQnmwpzEl_641wKKuRJHqy7lXU/exec'
 CACHE_TTL  = 1800  # 30 min
 
 _asset_cache = {'data': None, 'ts': 0}
@@ -346,26 +347,59 @@ def fetch_assets_raw(force=False):
 
     # --- Step 3: Employee lookup from DB ---
     conn = get_db()
-    emp_rows = conn.execute('SELECT id, emp_code, name, bu, bu_code, department FROM employees').fetchall()
+    emp_rows = conn.execute('SELECT id, emp_code, name, bu, bu_code, department, position FROM employees').fetchall()
     conn.close()
-    emp_code_lookup = {}
-    emp_name_lookup = {}
+    emp_code_lookup    = {}
+    emp_name_lookup    = {}   # full name → emp
+    emp_fname_lookup   = {}   # ชื่อจริง (word 0) → list of emp
+    emp_lname_lookup   = {}   # นามสกุล (word -1) → list of emp
     for e in emp_rows:
         if e['emp_code']:
             emp_code_lookup[str(e['emp_code']).strip()] = dict(e)
         key = re.sub(r'\s+', ' ', (e['name'] or '').strip().lower())
         emp_name_lookup[key] = dict(e)
+        parts = key.split()
+        if parts:
+            emp_fname_lookup.setdefault(parts[0], []).append(dict(e))
+        if len(parts) > 1:
+            emp_lname_lookup.setdefault(parts[-1], []).append(dict(e))
 
     def match_employee(raw_name, emp_code=None):
+        # 1) match by emp_code (reliable)
         if emp_code and str(emp_code).strip():
             hit = emp_code_lookup.get(str(emp_code).strip())
             if hit:
                 return hit
         if not raw_name or raw_name.strip().upper() in ('N/A', ''):
             return None
+
+        # ทำความสะอาดชื่อ: ตัด (xxx) ออก, normalize spaces, lower
         clean = re.sub(r'\([^)]*\)', '', raw_name).strip()
-        key = re.sub(r'\s+', ' ', clean.lower())
-        return emp_name_lookup.get(key)
+        key   = re.sub(r'\s+', ' ', clean.lower())
+
+        # 2) exact full-name match
+        hit = emp_name_lookup.get(key)
+        if hit:
+            return hit
+
+        # 3) fallback: ตรงทั้งชื่อจริง + นามสกุล (ช่วย edge case เว้นวรรคต่าง)
+        parts = key.split()
+        if len(parts) >= 2:
+            fname, lname = parts[0], parts[-1]
+            # หาคนที่มีชื่อจริงตรง แล้วกรองนามสกุล
+            candidates = emp_fname_lookup.get(fname, [])
+            for c in candidates:
+                c_parts = re.sub(r'\s+', ' ', (c['name'] or '').lower()).split()
+                if c_parts and c_parts[-1] == lname:
+                    return c
+            # หาคนที่มีนามสกุลตรง แล้วกรองชื่อจริง
+            candidates = emp_lname_lookup.get(lname, [])
+            for c in candidates:
+                c_parts = re.sub(r'\s+', ' ', (c['name'] or '').lower()).split()
+                if c_parts and c_parts[0] == fname:
+                    return c
+
+        return None
 
     def parse_date(s):
         if not s or not s.strip():
@@ -407,56 +441,121 @@ def fetch_assets_raw(force=False):
         days_remaining = (end_dt - today).days if end_dt else None
 
         if a_ed:
-            ed_emp_code = (a_ed.get('emp_code') or '').strip()
-            ed_emp_name = (a_ed.get('emp_name') or '').strip()
-            emp = match_employee(ed_emp_name, ed_emp_code)
+            ed_emp_code  = (a_ed.get('emp_code') or '').strip()
+            ed_emp_name  = (a_ed.get('emp_name') or '').strip()
+            emp          = match_employee(ed_emp_name, ed_emp_code)
             raw_device_type = (a_ed.get('device_type') or '').strip()
-            ownership = ''
-            device_type_clean = raw_device_type
-            for kw in ('เช่า', 'ซื้อ'):
-                if kw in raw_device_type:
-                    ownership = kw
-                    device_type_clean = raw_device_type.replace(kw, '').strip()
-                    break
-            brand    = (a_ed.get('brand') or '').strip()
-            dept     = (a_ed.get('section') or a_ed.get('department') or '').strip()
-            user_name = ed_emp_name
+            _DEVICE_NORM = {
+                'desktop,pc': 'Desktop', 'desktop': 'Desktop',
+                'notebook':   'Notebook',
+            }
+            if a_ed.get('is_mac'):
+                # Mac: ownership มาจาก radio button (mac_ownership) ที่ parser แยกไว้
+                ownership = (a_ed.get('mac_ownership') or '').strip()
+                device_type_clean = _DEVICE_NORM.get(raw_device_type.lower(), raw_device_type)
+            else:
+                # PC: ownership ฝังอยู่ใน device_type เช่น 'NoteBook เช่า'
+                ownership = ''
+                device_type_clean = raw_device_type
+                for kw in ('เช่า', 'ซื้อ'):
+                    if kw in raw_device_type:
+                        ownership = kw
+                        device_type_clean = raw_device_type.replace(kw, '').strip()
+                        break
+                device_type_clean = _DEVICE_NORM.get(device_type_clean.lower(), device_type_clean)
+            brand      = (a_ed.get('brand') or '').strip()
+            # dept จาก eDevice (ฝ่าย/แผนก ที่บันทึกใน eDevice โดยตรง)
+            ed_dept    = (a_ed.get('section') or a_ed.get('department') or '').strip()
+            user_name  = ed_emp_name
+            ed_status  = (a_ed.get('status') or '').strip()
+            # BU จาก eDevice (ทรัพย์สิน BU) — ใช้เป็น fallback เมื่อ HR lookup ไม่เจอ
+            ed_bu_code = (a_ed.get('bu_code') or '').strip()
+            ed_bu      = ''   # ชื่อเต็มไม่จำเป็น
         else:
             # Sheets-only: ไม่มีข้อมูล eDevice
-            emp = match_employee(sh.get('ชื่อ-สกุล', '') if sh else '')
-            device_type_clean = (sh.get('Group description') or '').strip() if sh else ''
-            ownership = 'เช่า' if is_rental else ''
-            brand    = (sh.get('Brand') or '').strip() if sh else ''
-            dept     = (sh.get('Department') or sh.get('แผนก') or '').strip() if sh else ''
-            user_name = (sh.get('ชื่อ-สกุล') or '').strip() if sh else ''
+            emp        = match_employee(sh.get('ชื่อ-สกุล', '') if sh else '')
+            _sh_dt = (sh.get('Group description') or '').strip() if sh else ''
+            _DEVICE_NORM = {'desktop,pc': 'Desktop', 'desktop': 'Desktop', 'notebook': 'Notebook'}
+            device_type_clean = _DEVICE_NORM.get(_sh_dt.lower(), _sh_dt)
+            ownership  = 'เช่า'   # Sheets-only = เครื่องเช่าทั้งหมด
+            brand      = (sh.get('Brand') or '').strip() if sh else ''
+            ed_dept    = (sh.get('Department') or sh.get('แผนก') or '').strip() if sh else ''
+            user_name  = (sh.get('ชื่อ-สกุล') or '').strip() if sh else ''
+            ed_status  = ''
+            ed_bu_code = ''
+            ed_bu      = ''
+
+        # ── Ownership fallback + flag ─────────────────────────────────
+        # ownership_needs_update: eDevice มีข้อมูลแต่ไม่ได้ระบุ เช่า/ซื้อ → ควรไปแก้ใน eDevice
+        # ownership_missing_edevice: ไม่มีข้อมูลใน eDevice เลย (Sheets-only) → ควรไปเพิ่มใน eDevice
+        ownership_needs_update    = False   # case 1: eDevice ไม่ระบุ ownership
+        ownership_missing_edevice = False   # case 2: Sheets-only ไม่มีใน eDevice
+
+        if a_ed and not ownership:
+            ownership = 'เช่า'   # infer จาก Sheets หรือ naming convention
+            ownership_needs_update = True   # แจ้งเตือนให้ไประบุใน eDevice
+        elif not a_ed and sh:
+            ownership_missing_edevice = True  # ไม่มีใน eDevice เลย
+
+        # ── BU / Dept resolution ────────────────────────────────────
+        # Priority: HR lookup → eDevice bu_code → ว่าง
+        final_bu_code = (emp['bu_code']    if emp else '') or ed_bu_code
+        final_bu      = (emp['bu']         if emp else '') or ed_bu
+        final_dept    = (emp['department'] if emp else '') or ed_dept
+        final_position= (emp['position']   if emp else '') or ''
+
+        # ── eDevice status → ผล logic ──────────────────────────────
+        # Return  → คืนเครื่องแล้ว (override contract_status เป็น returned)
+        # Expire  → หมดสัญญาแล้ว (ยืนยัน expired แม้ Sheets ไม่มีวันที่)
+        # Spare   → เครื่องสำรอง (ไม่มีผู้ใช้ — แยกแสดงได้)
+
+        # Sheets-only + Monthly Charge = 0 → ถือว่าคืนแล้ว (ไม่เคยบันทึกใน eDevice)
+        if ownership_missing_edevice and monthly == 0:
+            ed_status = 'Return'
+
+        ed_status_norm = ed_status.lower()
+        if ed_status_norm == 'return':
+            _contract_status = 'returned'
+        elif ed_status_norm == 'expire' and not end_dt:
+            # eDevice บอก expire แต่ Sheets ไม่มีวันที่ → ถือว่า expired
+            _contract_status = 'expired'
+        else:
+            _contract_status = 'returned' if is_returned else contract_status(end_dt)
 
         return {
-            'asset_no':       asset_no,
-            'computer_id':    computer_id,
-            'is_rental':      is_rental,
-            'serial_no':      serial_no,
-            'asset_type':     device_type_clean,
-            'ownership':      ownership,
-            'brand':          brand,
-            'model':          (sh.get('Model') or '').strip() if sh else '',
-            'user_name':      user_name,
-            'dept_sheet':     dept,
-            'monthly_charge': monthly,
-            'start_date':     start_dt.isoformat() if start_dt else '',
-            'end_date':       end_dt.isoformat()   if end_dt   else '',
-            'days_remaining': days_remaining,
-            'contract_status': 'returned' if is_returned else contract_status(end_dt),
-            'po_no':          (sh.get('Purchase Order No.') or '').strip() if sh else '',
-            'returned':       returned,
-            'customer_code':  (sh.get('Customer') or '').strip()      if sh else '',
-            'customer_name':  (sh.get('Customer Name') or '').strip() if sh else '',
-            'sub_asset':      '',
-            'sheets_matched': bool(sh),
-            'edevice_matched': bool(a_ed),
-            'employee_id':   emp['id']        if emp else None,
-            'emp_bu':        emp['bu']         if emp else '',
-            'emp_bu_code':   emp['bu_code']    if emp else '',
-            'emp_dept':      emp['department'] if emp else '',
+            'asset_no':        asset_no,
+            'computer_id':     computer_id,
+            'is_rental':       is_rental,
+            'serial_no':       serial_no,
+            'asset_type':      device_type_clean,
+            'ownership':       ownership,
+            'brand':           brand,
+            'model':           (sh.get('Model') or '').strip() if sh else brand,
+            'user_name':       user_name,
+            'dept_sheet':      ed_dept,
+            'monthly_charge':  monthly,
+            'start_date':      start_dt.isoformat() if start_dt else '',
+            'end_date':        end_dt.isoformat()   if end_dt   else '',
+            'days_remaining':  days_remaining,
+            'contract_status': _contract_status,
+            'edevice_status':  ed_status,          # Active/Expire/Return/Spare/Error
+            'po_no':           (sh.get('Purchase Order No.') or '').strip() if sh else '',
+            'returned':        returned,
+            'customer_code':   (sh.get('Customer') or '').strip()      if sh else '',
+            'customer_name':   (sh.get('Customer Name') or '').strip() if sh else '',
+            'sub_asset':       '',
+            'sheets_matched':           bool(sh),
+            'edevice_matched':          bool(a_ed),
+            'ownership_needs_update':   ownership_needs_update,     # มีใน eDevice แต่ไม่ระบุ เช่า/ซื้อ
+            'ownership_missing_edevice':ownership_missing_edevice,  # ไม่มีใน eDevice เลย
+            'employee_id':     emp['id']   if emp else None,
+            'emp_bu':          final_bu,
+            'emp_bu_code':     final_bu_code,
+            'emp_dept':        final_dept,
+            'emp_position':    final_position,
+            # flag ว่า BU/dept มาจากแหล่งไหน (เพื่อ debug / anomaly panel)
+            'bu_source':       'hr' if (emp and emp['bu_code']) else ('edevice' if ed_bu_code else ''),
+            'dept_source':     'hr' if (emp and emp['department']) else ('edevice' if ed_dept else 'sheets'),
         }
 
     results = []
@@ -519,6 +618,8 @@ def list_assets():
     force       = request.args.get('refresh') == '1'
     status_f    = request.args.get('status', '')
     type_f      = request.args.get('type', '')
+    position_f  = request.args.get('position', '')
+    dept_f      = request.args.get('dept', '')
     customer_f  = request.args.get('customer', '')
     bu_f        = request.args.get('bu', '')
     ownership_f = request.args.get('ownership', '')
@@ -526,13 +627,19 @@ def list_assets():
 
     data = fetch_assets_raw(force)
 
-    # apply filters (exclude returned by default)
-    rows = [r for r in data if r['contract_status'] != 'returned']
+    # ส่ง returned ด้วย — ให้ frontend เป็นคนตัดสินใจซ่อน/แสดง (checkbox "ซ่อน Return")
+    rows = list(data)
 
     if status_f:
         rows = [r for r in rows if r['contract_status'] == status_f]
     if type_f:
-        rows = [r for r in rows if r['asset_type'].lower() == type_f.lower()]
+        _TYPE_NORM = {'desktop,pc': 'Desktop', 'desktop': 'Desktop', 'notebook': 'Notebook'}
+        type_norm = _TYPE_NORM.get(type_f.lower(), type_f)
+        rows = [r for r in rows if _TYPE_NORM.get(r['asset_type'].lower(), r['asset_type']) == type_norm]
+    if position_f:
+        rows = [r for r in rows if r.get('emp_position') == position_f]
+    if dept_f:
+        rows = [r for r in rows if r.get('emp_dept') == dept_f]
     if customer_f:
         rows = [r for r in rows if r['customer_code'] == customer_f]
     if bu_f:
@@ -580,10 +687,9 @@ def asset_employee_map():
 
 @app.route('/api/employees/<int:eid>/assets', methods=['GET'])
 def employee_assets(eid):
-    """Return all assets currently assigned to this employee (SQLite + Sheets)."""
+    """Return all assets currently assigned to this employee."""
     conn = get_db()
     emp = conn.execute('SELECT name FROM employees WHERE id=?', (eid,)).fetchone()
-    # assets via SQLite assignment
     db_assets = conn.execute(
         'SELECT asset_no FROM asset_assignments WHERE employee_id=?', (eid,)
     ).fetchall()
@@ -592,20 +698,32 @@ def employee_assets(eid):
     db_asset_nos = {r['asset_no'] for r in db_assets}
     all_assets   = fetch_assets_raw()
 
-    emp_name = (emp['name'] if emp else '').strip().lower()
-    emp_name = re.sub(r'\s+', ' ', emp_name)
+    emp_name = re.sub(r'\s+', ' ', (emp['name'] if emp else '').strip().lower())
 
     matched = []
+    seen    = set()
     for a in all_assets:
         if a['contract_status'] == 'returned':
             continue
+        key = a['asset_no'] or a['computer_id'] or a['serial_no']
+
+        # 1) match จาก asset_assignments (manual assign)
         if a['asset_no'] in db_asset_nos:
-            matched.append(a)
-        elif a['assigned_from'] == 'sheets' and emp_name:
-            sheet_name = re.sub(r'\([^)]*\)', '', a['user_name']).strip().lower()
-            sheet_name = re.sub(r'\s+', ' ', sheet_name)
-            if sheet_name == emp_name:
-                matched.append(a)
+            if key not in seen:
+                matched.append(a); seen.add(key)
+            continue
+
+        # 2) match จาก employee_id (eDevice emp_code → HR lookup)
+        if a.get('employee_id') == eid:
+            if key not in seen:
+                matched.append(a); seen.add(key)
+            continue
+
+        # 3) fallback: match ชื่อจาก Sheets
+        if a.get('assigned_from') == 'sheets' and emp_name:
+            sheet_name = re.sub(r'\s+', ' ', re.sub(r'\([^)]*\)', '', a['user_name']).strip().lower())
+            if sheet_name == emp_name and key not in seen:
+                matched.append(a); seen.add(key)
 
     return jsonify(matched)
 
@@ -679,9 +797,24 @@ def dashboard_rental():
     from collections import defaultdict
 
     data = fetch_assets_raw()
+
+    def is_rental(r):
+        # ownership = 'เช่า' ครอบทั้ง eDevice และ Sheets-only แล้ว
+        return r.get('ownership') == 'เช่า'
+
+    # resolution ที่ถือว่า "ดำเนินการแล้ว" → ซ่อนจาก dashboard
+    RESOLVED = {'returned', 'bought', 'renewed', 'extended'}
+
+    # eDevice status ที่ซ่อนจาก dashboard rental
+    # - Return  → contract_status = 'returned' แล้ว (กรองออกโดย condition ด้านล่าง)
+    # - Spare   → เครื่องสำรอง ไม่มีผู้ใช้งาน ไม่นับในสถิติเช่า
+    ED_SKIP = {'spare'}
+
     rentals = [r for r in data
-               if r.get('ownership') == 'เช่า'
-               and r['contract_status'] != 'returned']
+               if is_rental(r)
+               and r['contract_status'] != 'returned'
+               and r.get('resolution', 'pending') not in RESOLVED
+               and (r.get('edevice_status') or '').lower() not in ED_SKIP]
 
     today = date.today()
 
@@ -713,14 +846,33 @@ def dashboard_rental():
         key=lambda x: -x['count']
     )[:15]
 
-    # timeline: สัญญาหมดรายเดือน (เฉพาะที่มี end_date, 18 เดือนข้างหน้า + ที่หมดแล้ว)
-    timeline_map = defaultdict(lambda: {'count': 0, 'monthly': 0.0})
+    # timeline: สัญญาหมดรายเดือน แยก BU
+    # timeline_by_bu = { bu_code: { ym: count } }
+    all_months = set()
+    bu_month_map = defaultdict(lambda: defaultdict(int))
+    timeline_map  = defaultdict(lambda: {'count': 0, 'monthly': 0.0})
     for r in rentals:
         if not r['end_date']:
             continue
-        ym = r['end_date'][:7]   # "2025-09"
+        ym   = r['end_date'][:7]
+        bu   = r['emp_bu_code'] or '—'
+        all_months.add(ym)
+        bu_month_map[bu][ym]        += 1
         timeline_map[ym]['count']   += 1
         timeline_map[ym]['monthly'] += r['monthly_charge']
+
+    sorted_months = sorted(all_months)
+    # รายการ BU ที่มีใน timeline (เรียงตาม total มาก→น้อย)
+    bu_totals = {bu: sum(m.values()) for bu, m in bu_month_map.items()}
+    timeline_bus = sorted(bu_totals, key=lambda b: -bu_totals[b])
+    # สร้าง timeline_by_bu: list of { bu_code, months: [{month, count}] }
+    timeline_by_bu = [
+        {
+            'bu_code': bu,
+            'months': [{'month': ym, 'count': bu_month_map[bu].get(ym, 0)} for ym in sorted_months]
+        }
+        for bu in timeline_bus
+    ]
     timeline = sorted(
         [{'month': k, 'count': v['count'], 'monthly': v['monthly']} for k, v in timeline_map.items()],
         key=lambda x: x['month']
@@ -732,46 +884,114 @@ def dashboard_rental():
         key=lambda x: (x['days_remaining'] is None, x['days_remaining'] or 0)
     )
     urgent_out = [{
-        'asset_no':      r['asset_no'],
-        'computer_id':   r['computer_id'],
-        'model':         r['model'],
-        'brand':         r['brand'],
-        'user_name':     r['user_name'],
-        'emp_bu_code':   r['emp_bu_code'],
-        'emp_dept':      r['emp_dept'] or r['dept_sheet'],
-        'end_date':      r['end_date'],
+        'asset_no':       r['asset_no'],
+        'computer_id':    r['computer_id'],
+        'serial_no':      r['serial_no'],
+        'asset_type':     r.get('asset_type', ''),
+        'model':          r['model'],
+        'brand':          r['brand'],
+        'ownership':      r.get('ownership', ''),
+        'ownership_needs_update':    r.get('ownership_needs_update', False),
+        'ownership_missing_edevice': r.get('ownership_missing_edevice', False),
+        'user_name':      r['user_name'],
+        'emp_bu_code':    r['emp_bu_code'],
+        'emp_dept':       r['emp_dept'] or r['dept_sheet'],
+        'start_date':     r['start_date'],
+        'end_date':       r['end_date'],
         'days_remaining': r['days_remaining'],
-        'contract_status': r['contract_status'],
-        'monthly_charge': r['monthly_charge'],
-        'resolution':    r.get('resolution', 'pending'),
+        'contract_status':   r['contract_status'],
+        'monthly_charge':    r['monthly_charge'],
+        'resolution':        r.get('resolution', 'pending'),
+        'edevice_status':    r.get('edevice_status', ''),
+        'sheets_matched':    r.get('sheets_matched', False),
     } for r in urgent]
 
     # ---- anomaly: เครื่องเช่าที่ไม่มีข้อมูลสัญญา (status=unknown) ----
     def _mini(r):
         return {
+            'asset_no':       r['asset_no'],
             'computer_id':    r['computer_id'],
             'serial_no':      r['serial_no'],
             'brand':          r['brand'],
             'model':          r['model'],
-            'device_type':    r.get('asset_type', ''),
+            'asset_type':     r.get('asset_type', ''),
+            'ownership':      r.get('ownership', ''),
             'user_name':      r['user_name'],
+            'employee_id':    r.get('employee_id'),
             'emp_bu_code':    r['emp_bu_code'],
-            'emp_dept':       r['emp_dept'] or r.get('dept_sheet', ''),
+            'emp_dept':       r['emp_dept'],
             'monthly_charge': r['monthly_charge'],
+            'start_date':     r['start_date'],
             'end_date':       r['end_date'],
+            'days_remaining': r['days_remaining'],
+            'contract_status':r['contract_status'],
+            'edevice_status': r.get('edevice_status', ''),
+            'sheets_matched':  r.get('sheets_matched', False),
+            'edevice_matched': r.get('edevice_matched', False),
+            'ownership_needs_update':    r.get('ownership_needs_update', False),
+            'ownership_missing_edevice': r.get('ownership_missing_edevice', False),
         }
 
-    no_contract = [_mini(r) for r in rentals if r['contract_status'] == 'unknown']
+    # no_contract = เช่าที่ไม่มีข้อมูลสัญญา แต่ยกเว้น ownership_needs_update
+    # (กลุ่มนั้นมีปัญหา ownership ก่อน ควรแก้ใน eDevice ก่อน → อยู่ใน panel needs_update แทน)
+    no_contract = [_mini(r) for r in rentals
+                   if r['contract_status'] == 'unknown'
+                   and not r.get('ownership_needs_update')]
     no_contract.sort(key=lambda x: (x['emp_bu_code'] or '่', x['emp_dept'] or '่'))
 
-    # ---- anomaly: เครื่องเช่าที่ไม่มี emp_bu_code (= ยังไม่ link กับพนักงานใน HR) ----
-    # แบ่งย่อย: has_dept = มีแผนกจาก Sheets แต่ไม่มี BU / no_dept = ไม่มีข้อมูลเลย
+    # ---- anomaly: เครื่องเช่าที่ไม่มี BU (จากทั้ง HR + eDevice) ----
+    # หลังจากปรับ logic ให้ eDevice bu_code เป็น fallback แล้ว
+    # no_bu = เครื่องที่ยังหา BU ไม่เจอจากทั้งสองแหล่ง
     no_bu_list = [r for r in rentals if not r['emp_bu_code']]
     no_bu = []
     for r in sorted(no_bu_list, key=lambda x: x['computer_id'] or ''):
         m = _mini(r)
-        m['has_dept'] = bool(r['emp_dept'] or r.get('dept_sheet', ''))
+        m['has_dept']   = bool(r['emp_dept'])
+        m['bu_source']  = r.get('bu_source', '')
+        m['dept_source']= r.get('dept_source', '')
         no_bu.append(m)
+
+    # rental_index: { "YYYY-MM|bu_code": [mini records] } — สำหรับ expand แท่ง timeline
+    rental_index = defaultdict(list)
+    for r in rentals:
+        if not r['end_date']:
+            continue
+        ym  = r['end_date'][:7]
+        bu  = r['emp_bu_code'] or '—'
+        rental_index[f'{ym}|{bu}'].append({
+            'computer_id':    r['computer_id'],
+            'asset_no':       r['asset_no'],
+            'asset_type':     r.get('asset_type', ''),
+            'brand':          r['brand'],
+            'model':          r['model'],
+            'serial_no':      r['serial_no'],
+            'ownership':      r.get('ownership', ''),
+            'user_name':      r['user_name'],
+            'employee_id':    r.get('employee_id'),
+            'emp_bu_code':    r['emp_bu_code'],
+            'emp_dept':       r['emp_dept'] or r.get('dept_sheet', ''),
+            'end_date':       r['end_date'],
+            'days_remaining': r['days_remaining'],
+            'contract_status': r['contract_status'],
+            'monthly_charge': r['monthly_charge'],
+            'edevice_status': r.get('edevice_status', ''),
+            'sheets_matched':  r.get('sheets_matched', False),
+            'edevice_matched': r.get('edevice_matched', False),
+            'ownership_needs_update':    r.get('ownership_needs_update', False),
+            'ownership_missing_edevice': r.get('ownership_missing_edevice', False),
+        })
+        rental_index[f'{ym}|ALL'].append(rental_index[f'{ym}|{bu}'][-1])
+
+    # ---- anomaly: ยังไม่บันทึกใน eDevice (Sheets-only, ownership_missing_edevice) ----
+    all_assets = fetch_assets_raw()
+    missing_edevice = [_mini(r) for r in all_assets
+                       if r.get('ownership_missing_edevice')
+                       and r['contract_status'] != 'returned']
+    missing_edevice.sort(key=lambda x: (x['emp_bu_code'] or '่', x['emp_dept'] or '่'))
+
+    # ---- anomaly: eDevice ไม่ระบุการถือครอง (ownership_needs_update) ----
+    needs_update = [_mini(r) for r in all_assets if r.get('ownership_needs_update')]
+    needs_update.sort(key=lambda x: (x['emp_bu_code'] or '่', x['emp_dept'] or '่'))
 
     return jsonify({
         'total_rental':   len(rentals),
@@ -780,9 +1000,13 @@ def dashboard_rental():
         'by_bu':          by_bu,
         'by_dept':        by_dept,
         'timeline':       timeline,
+        'timeline_by_bu': timeline_by_bu,
+        'rental_index':   dict(rental_index),
         'urgent':         urgent_out,
         'no_contract':    no_contract,
         'no_bu':          no_bu,
+        'missing_edevice': missing_edevice,
+        'needs_update':    needs_update,
     })
 
 
@@ -790,16 +1014,102 @@ def dashboard_rental():
 def asset_meta():
     data = fetch_assets_raw()
     active = [r for r in data if r['contract_status'] != 'returned']
+    _TYPE_NORM = {
+        'desktop,pc': 'Desktop', 'desktop': 'Desktop',
+        'notebook':   'Notebook',
+    }
     customers = {}
-    types = set()
+    types     = set()
+    positions = set()
+    depts     = set()
     for r in active:
         customers[r['customer_code']] = r['customer_name']
-        if r['asset_type']:
-            types.add(r['asset_type'])
+        t = r['asset_type']
+        if t:
+            types.add(_TYPE_NORM.get(t.lower(), t))
+        p = r.get('emp_position', '')
+        if p:
+            positions.add(p)
+        d = r.get('emp_dept', '')
+        if d:
+            depts.add(d)
     return jsonify({
-        'customers': [{'code': k, 'name': v} for k, v in customers.items()],
-        'types': sorted(types)
+        'customers':  [{'code': k, 'name': v} for k, v in customers.items()],
+        'types':      sorted(types),
+        'positions':  sorted(positions),
+        'depts':      sorted(depts),
     })
+
+
+@app.route('/api/sheets/update-info', methods=['POST'])
+def sheets_update_info():
+    """อัพเดท ชื่อ-สกุล / ฝ่าย / แผนก กลับไปใน Google Sheets ผ่าน Apps Script"""
+    try:
+        data = fetch_assets_raw()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'โหลด asset ไม่ได้: {e}'}), 500
+
+    # โหลด eDevice เพื่อดึง section (ฝ่าย) ซึ่งไม่ได้ expose ใน asset record ปกติ
+    ed_section_map = {}   # serial_no.upper() → section
+    try:
+        for a in fetch_edevice_assets():
+            sn_ed = (a.get('serial_no') or '').strip().upper()
+            sec   = (a.get('section') or '').strip()
+            if sn_ed and sec:
+                ed_section_map[sn_ed] = sec
+    except Exception:
+        pass
+
+    updates = []
+    skipped = []
+    for r in data:
+        sn = (r.get('serial_no') or '').strip()
+        if not sn or not r.get('sheets_matched'):
+            continue   # เฉพาะ record ที่มีใน Sheets เท่านั้น
+
+        name     = (r.get('user_name') or '').strip()
+        dept     = (r.get('emp_dept') or '').strip()          # แผนก จาก HR
+        division = ed_section_map.get(sn.upper(), '')         # ฝ่าย จาก eDevice section
+        if not division:
+            division = (r.get('dept_sheet') or '').strip()    # fallback: จาก eDevice dept
+
+        if not name and not dept and not division:
+            skipped.append(sn)
+            continue
+
+        updates.append({
+            'serial':   sn,
+            'name':     name,
+            'dept':     dept,
+            'division': division,
+        })
+
+    if not updates:
+        return jsonify({'ok': False, 'error': 'ไม่มีข้อมูลที่จะอัพเดท', 'skipped': len(skipped)})
+
+    try:
+        import requests as _req
+        payload = json.dumps({'updates': updates}).encode('utf-8')
+        headers = {'Content-Type': 'application/json'}
+
+        # Google Apps Script doPost flow:
+        # Step 1: POST → script รัน → ได้ 302 redirect ไปที่ echo URL
+        r1 = _req.post(SHEETS_SCRIPT_URL, data=payload, headers=headers,
+                       allow_redirects=False, timeout=30)
+
+        # Step 2: GET echo URL → ดึง response ที่ script return กลับมา
+        if r1.status_code in (301, 302, 303) and 'Location' in r1.headers:
+            r2 = _req.get(r1.headers['Location'], timeout=30)
+            resp_text = r2.text
+        else:
+            resp_text = r1.text
+
+        result = json.loads(resp_text)
+        result['sent']    = len(updates)
+        result['skipped'] = len(skipped)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e), 'sent': len(updates)}), 500
 
 
 @app.route('/api/assets/export', methods=['GET'])
@@ -860,8 +1170,10 @@ def export_assets():
 EDEVICE_JSON = os.path.join(os.path.dirname(__file__), 'edevice_assets.json')
 EDEVICE_LOGIN_URL  = 'http://amarin.intra/webappl/acorporate/index.aspx?s=out'
 EDEVICE_CORP_URL   = 'http://www.amarin.intra/webappl/eDevice_ATV/***REMOVED-EDEVICE_INIT_PATH***'
-EDEVICE_DETAIL_URL = 'http://www.amarin.intra/webappl/eDevice_ATV/ComputerDetail.asp?id={}'
-EDEVICE_LIST_URL   = 'http://www.amarin.intra/webappl/eDevice_ATV/Computer1.asp'
+EDEVICE_DETAIL_URL     = 'http://www.amarin.intra/webappl/eDevice_ATV/ComputerDetail.asp?id={}'
+EDEVICE_MAC_DETAIL_URL = 'http://www.amarin.intra/webappl/eDevice_ATV/MacintoshDetail.asp?id={}'
+EDEVICE_LIST_URL       = 'http://www.amarin.intra/webappl/eDevice_ATV/Computer1.asp'
+EDEVICE_MAC_URL        = 'http://www.amarin.intra/webappl/eDevice_ATV/Macintosh.asp'
 
 BU_TH_MAP = {
     'อมรินทร์ทีวี': 'AMTV', 'ออมนิเวิร์ส': 'AOMNI', 'สำนักพิมพ์': 'APUB',
@@ -893,27 +1205,167 @@ def _edevice_login():
     return dict(sess.cookies)
 
 
-def _parse_computer_detail(text, cid):
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(text, 'html.parser')
-    data = {'computer_id': cid}
-    label_map = {
-        'รหัสพนักงาน*:': 'emp_code', 'ชื่อพนักงาน*:': 'emp_name',
-        'ฝ่าย :': 'section', 'แผนก :': 'department',
-        'ทรัพย์สิน BU*:': 'bu_th', 'Serial No.(ผู้ผลิต)*:': 'serial_no',
-        'ชื่อคอมพิวเตอร์:': 'computer_name', 'IP Address:': 'ip',
-        'Mac Address:': 'mac', 'Status:': 'status', 'ยี่ห้อ:': 'brand',
-        'ประเภท*:': 'device_type', 'วันที่รับสินค้า*:': 'received_date',
-        'ราคาเช่าต่อเดือน:': 'monthly_rent', 'ทรัพย์สินของ*:': 'asset_type',
-    }
+def _parse_label_value(soup, label_map):
+    """Helper: วน <tr> แล้ว match label → value จาก adjacent <td> cells"""
+    all_labels = set(label_map.keys())
+    data = {}
     for row in soup.find_all('tr'):
         cells = [td.get_text(strip=True).replace('\xa0', ' ') for td in row.find_all('td')]
-        for i in range(len(cells)-1):
+        for i in range(len(cells) - 1):
+            val = cells[i + 1].strip()
+            if not val or val.endswith(':') or val in all_labels:
+                continue
             for lbl, key in label_map.items():
-                if lbl in cells[i] and cells[i+1] and key not in data:
-                    data[key] = cells[i+1].strip()
-    data['bu_code'] = bu_th_to_code(data.get('bu_th', ''))
+                if lbl in cells[i] and key not in data:
+                    data[key] = val
     return data
+
+
+def _parse_computer_detail(text, cid):
+    """Parse PC detail page (ComputerDetail.asp)"""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(text, 'html.parser')
+    label_map = {
+        'รหัสพนักงาน*:':         'emp_code',
+        'ชื่อพนักงาน*:':         'emp_name',
+        'ฝ่าย :':                'section',
+        'แผนก :':                'department',
+        'ทรัพย์สิน BU*:':        'bu_th',
+        'Serial No.(ผู้ผลิต)*:': 'serial_no',
+        'ชื่อคอมพิวเตอร์:':      'computer_name',
+        'IP Address:':            'ip',
+        'Mac Address:':           'mac',
+        'Status:':                'status',
+        'ยี่ห้อ:':                'brand',
+        'ประเภท*:':               'device_type',
+        'วันที่รับสินค้า*:':     'received_date',
+        'ราคาเช่าต่อเดือน:':    'monthly_rent',
+        'ทรัพย์สินของ*:':        'asset_type',
+    }
+    data = {'computer_id': cid}
+    data.update(_parse_label_value(soup, label_map))
+    data['bu_code'] = bu_th_to_code(data.get('bu_th', ''))
+    _clean_serial(data)
+    return data
+
+
+def _get_cell_value(td):
+    """ดึงค่าจาก <td> — ถ้ามี <select> ให้ดู <option selected>, ถ้ามี <input> ดู value attr"""
+    # กรณี select dropdown
+    selects = td.find_all('select')
+    if selects:
+        values = []
+        for sel in selects:
+            opt = sel.find('option', selected=True)
+            if not opt:
+                # บางหน้าใช้ selected="" หรือ selected="selected"
+                opt = sel.find('option', attrs={'selected': True})
+            if not opt and sel.find('option'):
+                opt = sel.find_all('option')[0]  # fallback: option แรก
+            if opt:
+                v = opt.get_text(strip=True).replace('\xa0', ' ')
+                if v:
+                    values.append(v)
+        return values  # คืน list เพราะอาจมีหลาย select
+    # กรณี text input
+    inp = td.find('input', {'type': ['text', 'hidden']})
+    if inp and inp.get('value'):
+        return [inp['value'].strip()]
+    # กรณี plain text
+    txt = td.get_text(strip=True).replace('\xa0', ' ')
+    return [txt] if txt else []
+
+
+def _parse_mac_detail(text, cid):
+    """Parse Mac detail page (MacintoshDetail.asp)
+
+    Mac page ใช้ <select> dropdown สำหรับหลาย field
+    โดยเฉพาะ row 'ประเภท*:' มี 2 selects: [device_type] [ownership(เช่า/ซื้อ)]
+    ต่างจาก PC ที่ ownership ฝังเป็น text ใน device_type
+    """
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(text, 'html.parser')
+
+    # label → field mapping (ใช้สำหรับ text fields ปกติ)
+    label_map = {
+        'รหัสพนักงาน*:':    'emp_code',
+        'ชื่อพนักงาน*:':    'emp_name',
+        'ฝ่าย :':           'section',
+        'แผนก :':           'department',
+        'ทรัพย์สิน BU*:':   'bu_th',
+        'ทรัพย์สินฝ่าย*:':  'dept_asset',
+        'Serial No.*:':      'serial_no',
+        'ชื่อเครื่อง :':    'computer_name',
+        'ชื่อคอมพิวเตอร์ :':'computer_name',
+        'Mac Address :':     'mac',
+        'รหัสทรัพย์สิน AMS':'asset_ams',
+    }
+
+    # fields ที่มาจาก <select> (single select → ค่าเดียว)
+    select_label_map = {
+        'Status :':  'status',
+        'รุ่น :':    'brand',       # Mac model: MacBookPro, iMac, etc.
+    }
+
+    data = {'computer_id': cid, 'is_mac': True}
+
+    for row in soup.find_all('tr'):
+        tds = row.find_all('td')
+        if len(tds) < 2:
+            continue
+        for i, td in enumerate(tds[:-1]):
+            label = td.get_text(strip=True).replace('\xa0', ' ')
+            val_td = tds[i + 1]
+
+            # ── ประเภท / ประเภท*: — device_type + ownership ──
+            # Mac detail page แสดงเป็น plain text เช่น "Macbook    ซื้อ"
+            # (เหมือน PC ที่ ownership ฝังอยู่ใน device_type text)
+            if 'ประเภท' in label and 'device_type' not in data:
+                values = _get_cell_value(val_td)
+                raw_str = values[0] if values else ''
+                _DEVICE_NORM_MAC = {
+                    'desktop': 'Desktop', 'notebook': 'Notebook',
+                    'macbook': 'MacBook', 'imac': 'iMac', 'mac mini': 'Mac Mini',
+                    'macbook pro': 'MacBook', 'macbook air': 'MacBook',
+                }
+                # แยก ownership ออกจาก device_type (เช่น "Macbook    ซื้อ")
+                raw_dt = raw_str
+                for kw in ('เช่า', 'ซื้อ'):
+                    if kw in raw_str:
+                        data['mac_ownership'] = kw
+                        raw_dt = raw_str.replace(kw, '').strip()
+                        break
+                data['device_type'] = _DEVICE_NORM_MAC.get(raw_dt.lower(), raw_dt) or raw_dt
+                continue
+
+            # ── select fields ทั่วไป ──
+            for lbl, key in select_label_map.items():
+                if lbl in label and key not in data:
+                    values = _get_cell_value(val_td)
+                    if values:
+                        data[key] = values[0]
+
+            # ── text fields ทั่วไป ──
+            for lbl, key in label_map.items():
+                if lbl in label and key not in data:
+                    values = _get_cell_value(val_td)
+                    if values:
+                        # เลือกค่าที่ไม่ใช่ label ตัวเอง
+                        for v in values:
+                            if v and not v.endswith(':'):
+                                data[key] = v
+                                break
+
+    data['bu_code'] = bu_th_to_code(data.get('bu_th', ''))
+    _clean_serial(data)
+    return data
+
+
+def _clean_serial(data):
+    """กรอง serial_no ที่เป็น placeholder หรือ garbage"""
+    sn = data.get('serial_no', '')
+    if sn and sn.lower() in ('serial', 'serial no', 'serial no.', '-', 'n/a', 'na'):
+        data['serial_no'] = ''
 
 
 def fetch_edevice_assets(force_live=False):
@@ -927,26 +1379,46 @@ def fetch_edevice_assets(force_live=False):
         except Exception:
             pass  # JSON เสีย — fall through ไป live fetch
 
-    # live fetch
+    # live fetch — ดึง ID จากทั้ง PC (Computer1.asp) และ Mac (Macintosh.asp)
     cookies = _edevice_login()
-    s = req_lib.Session()
-    s.cookies.update(cookies)
-    r = s.get(EDEVICE_LIST_URL, timeout=15)
-    computer_ids = re.findall(r"<OPTION value='([^']+)'>[^<]+</Option>",
+
+    def get_ids(url):
+        try:
+            r = req_lib.get(url, cookies=cookies, timeout=15)
+            return re.findall(r"<OPTION value='([^']+)'>[^<]+</Option>",
                               r.content.decode('tis-620', errors='replace'))
+        except Exception:
+            return []
+
+    pc_ids  = get_ids(EDEVICE_LIST_URL)
+    mac_ids = get_ids(EDEVICE_MAC_URL)
+
+    # map: cid → detail_url (PC และ Mac ใช้ endpoint ต่างกัน)
+    cid_url_map = {}
+    for cid in pc_ids:
+        cid_url_map[cid] = EDEVICE_DETAIL_URL.format(cid)
+    for cid in mac_ids:
+        # Mac ใช้ MacintoshDetail.asp (ไม่ทับกับ PC)
+        cid_url_map[cid] = EDEVICE_MAC_DETAIL_URL.format(cid)
 
     def fetch_one(cid):
         try:
-            r2 = req_lib.get(EDEVICE_DETAIL_URL.format(cid), cookies=cookies, timeout=12)
+            url  = cid_url_map[cid]
+            r2   = req_lib.get(url, cookies=cookies, timeout=12)
             if r2.status_code == 200 and len(r2.content) > 3000:
-                return _parse_computer_detail(r2.content.decode('tis-620', errors='replace'), cid)
+                text = r2.content.decode('tis-620', errors='replace')
+                if cid in mac_ids:
+                    rec = _parse_mac_detail(text, cid)   # Mac parser
+                else:
+                    rec = _parse_computer_detail(text, cid)  # PC parser
+                return rec
         except: pass
         return None
 
     assets = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
         for result in concurrent.futures.as_completed(
-                {ex.submit(fetch_one, cid): cid for cid in computer_ids}):
+                {ex.submit(fetch_one, cid): cid for cid in cid_url_map}):
             r2 = result.result()
             if r2:
                 assets.append(r2)
@@ -954,6 +1426,35 @@ def fetch_edevice_assets(force_live=False):
     with open(EDEVICE_JSON, 'w', encoding='utf-8') as f:
         json.dump(assets, f, ensure_ascii=False, indent=2)
     return assets
+
+
+@app.route('/api/debug/mac-detail', methods=['GET'])
+def debug_mac_detail():
+    """Debug: ดู raw label-value pairs จาก MacintoshDetail.asp ของ Mac เครื่องแรก"""
+    import json as _json
+    try:
+        cid = request.args.get('cid', '')
+        cookies = _edevice_login()
+        if not cid:
+            # หา Mac ID แรกจาก Macintosh.asp
+            r = req_lib.get(EDEVICE_MAC_URL, cookies=cookies, timeout=15)
+            ids = re.findall(r"<OPTION value='([^']+)'>[^<]+</Option>",
+                             r.content.decode('tis-620', errors='replace'))
+            if not ids:
+                return jsonify({'error': 'ไม่พบ Mac ID ใน Macintosh.asp'})
+            cid = ids[0]
+        url = EDEVICE_MAC_DETAIL_URL.format(cid)
+        r2  = req_lib.get(url, cookies=cookies, timeout=12)
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r2.content.decode('tis-620', errors='replace'), 'html.parser')
+        rows_out = []
+        for row in soup.find_all('tr'):
+            cells = [td.get_text(strip=True).replace('\xa0', ' ') for td in row.find_all('td')]
+            if cells:
+                rows_out.append(cells)
+        return jsonify({'cid': cid, 'url': url, 'rows': rows_out})
+    except Exception as e:
+        return jsonify({'error': str(e)})
 
 
 @app.route('/api/sync/edevice/preview', methods=['GET'])

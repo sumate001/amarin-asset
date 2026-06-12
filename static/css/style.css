@@ -64,11 +64,12 @@ header p { font-size: .75rem; opacity: .7; margin-top: 2px; }
 .search-icon {
   position: absolute; left: 9px; width: 16px; height: 16px; color: #94a3b8;
 }
-#search {
+#search, #a-search {
   padding: 7px 10px 7px 32px; border: 1px solid #cbd5e1;
   border-radius: 8px; font-size: .82rem; width: 220px; outline: none;
+  background: #fff; color: #1e293b;
 }
-#search:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+#search:focus, #a-search:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
 .clear-btn {
   position: absolute; right: 8px; border: none; background: none;
   cursor: pointer; color: #94a3b8; font-size: .9rem; padding: 2px;
@@ -214,6 +215,21 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 
 /* ---- Dashboard ---- */
 .tab-content { padding: 20px 24px; }
+/* Dashboard sub-tabs */
+.dash-subtab-bar {
+  display: flex; gap: 4px; margin-bottom: 24px;
+  border-bottom: 2px solid #e2e8f0; padding-bottom: 0;
+}
+.dash-subtab {
+  padding: 9px 22px; font-size: .85rem; font-weight: 600;
+  border: none; background: none; cursor: pointer; color: #64748b;
+  border-bottom: 3px solid transparent; margin-bottom: -2px;
+  border-radius: 6px 6px 0 0; transition: color .15s, border-color .15s, background .15s;
+}
+.dash-subtab:hover { color: #334155; background: #f8fafc; }
+.dash-subtab.active { color: #4f46e5; border-bottom-color: #4f46e5; background: #f5f3ff; }
+.dash-pane { animation: fadeIn .15s ease; }
+
 .dash-grid {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px;
 }
@@ -228,6 +244,7 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .stat-label { font-size: .78rem; color: #64748b; font-weight: 600; margin-bottom: 6px; }
 .stat-value { font-size: 2rem; font-weight: 800; color: #1e293b; }
 .stat-value.green { color: #16a34a; }
+.stat-sub { font-size: .72rem; margin-top: 4px; color: #dc2626; font-weight: 600; }
 
 .dash-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 @media (max-width: 768px) { .dash-row { grid-template-columns: 1fr; } }
@@ -298,6 +315,8 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .pill-warning  { background: #fef9c3; color: #ca8a04; }
 .pill-ok       { background: #dcfce7; color: #16a34a; }
 .pill-unknown  { background: #f1f5f9; color: #64748b; }
+.pill-bought   { background: #ede9fe; color: #6d28d9; }
+.pill-rented   { background: #fef3c7; color: #b45309; }
 
 .days-chip {
   font-size: .8rem; font-weight: 700; padding: 2px 8px;

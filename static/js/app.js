@@ -1,3 +1,107 @@
+// ---- Ownership badge (ใช้ทุกหน้า) ----
+function ownershipBadge(a) {
+  if (a.ownership === 'ซื้อ') {
+    return '<span class="pill-bought">ซื้อ</span>';
+  }
+  if (a.ownership === 'เช่า' && !a.ownership_needs_update) {
+    return '<span class="pill-rented">เช่า</span>';
+  }
+  if (a.ownership_needs_update && a.sheets_matched) {
+    return '<span class="pill-rented">เช่า</span> <span title="ยืนยันจาก Sheets แต่ eDevice ยังไม่ระบุ" style="font-size:.68rem;color:#f59e0b;cursor:help">✎</span>';
+  }
+  if (a.ownership_missing_edevice || a.ownership_needs_update) {
+    return '<span style="font-size:.72rem;padding:2px 7px;border-radius:4px;background:#f1f5f9;color:#94a3b8;font-weight:600">ไม่ระบุ</span>';
+  }
+  return '<span style="color:#cbd5e1">—</span>';
+}
+
+// ---- Shared dashboard/anomaly helpers (global) ----
+const _TH = 'padding:7px 10px;text-align:left;font-size:.78rem;font-weight:600;color:#374151;white-space:nowrap';
+
+function _dateFmt(d) {
+  return d ? new Date(d).toLocaleDateString('th-TH', {day:'numeric', month:'short', year:'2-digit'}) : '—';
+}
+
+function _srcBadge(a) {
+  if (a.sheets_matched && a.edevice_matched) return `<span class="src-badge src-both">eDevice+Sheets</span>`;
+  if (a.sheets_matched)  return `<span class="src-badge src-sheets">Sheets</span>`;
+  if (a.edevice_matched) return `<span class="src-badge src-edevice">eDevice</span>`;
+  return `<span class="src-badge src-sheets">Sheets</span>`;
+}
+
+function _edBadge(s) {
+  if (!s) return '—';
+  const m = { active:{bg:'#dcfce7',color:'#15803d',label:'● Active'}, expire:{bg:'#fef9c3',color:'#854d0e',label:'⚠ Expire'},
+              return:{bg:'#f1f5f9',color:'#475569',label:'↩ Return'}, spare:{bg:'#ede9fe',color:'#6d28d9',label:'◎ Spare'},
+              error:{bg:'#fee2e2',color:'#b91c1c',label:'✕ Error'} };
+  const c = m[s.toLowerCase()] || {bg:'#f1f5f9',color:'#475569',label:s};
+  return `<span style="font-size:.72rem;padding:2px 7px;border-radius:5px;font-weight:600;background:${c.bg};color:${c.color}">${c.label}</span>`;
+}
+
+function _contractPill(a) {
+  // เครื่องซื้อ + eDevice = Expire → ตัดจำหน่ายแล้ว ไม่ใช่สัญญาหมด
+  if (a.ownership === 'ซื้อ' && (a.edevice_status||'').toLowerCase() === 'expire') {
+    return `<span class="status-pill" style="background:#f1f5f9;color:#475569">🗑 ตัดจำหน่าย</span>`;
+  }
+  const cls = {expired:'pill-expired',critical:'pill-critical',warning:'pill-warning',ok:'pill-ok',returned:'pill-returned'};
+  const lbl = {
+    expired:  `🔴 เกิน ${Math.abs(a.days_remaining||0)} วัน`,
+    critical: `🟠 เหลือ ${a.days_remaining} วัน`,
+    warning:  `🟡 เหลือ ${a.days_remaining} วัน`,
+    ok:       `🟢 อยู่ในสัญญา`,
+    returned: `↩ คืนแล้ว`,
+    unknown:  `⚪ ไม่มีข้อมูล`,
+  };
+  const s = a.contract_status || 'unknown';
+  return `<span class="status-pill ${cls[s]||''}">${lbl[s]||s}</span>`;
+}
+
+function _anomalyHead(showEdStatus = true) {
+  return `
+    <th style="${_TH}">Asset No.</th>
+    <th style="${_TH}">รหัสเครื่อง</th>
+    <th style="${_TH}">Serial No.</th>
+    <th style="${_TH};text-align:center">แหล่งข้อมูล</th>
+    <th style="${_TH}">ประเภท</th>
+    <th style="${_TH}">ประเภทสัญญา</th>
+    <th style="${_TH}">รุ่น</th>
+    <th style="${_TH}">ผู้ถือครอง</th>
+    <th style="${_TH}">BU</th>
+    <th style="${_TH}">แผนก</th>
+    <th style="${_TH}">วันหมดสัญญา</th>
+    <th style="${_TH};text-align:center">สถานะสัญญา</th>
+    ${showEdStatus ? `<th style="${_TH};text-align:center">สถานะ eDevice</th>` : ''}
+    <th style="${_TH};text-align:right">฿/เดือน</th>`;
+}
+
+function _anomalyRow(a, opts = {}) {
+  const showEdStatus = opts.showEdStatus !== false;
+  const rowBg = a.contract_status === 'expired'  ? 'background:#fff5f5'
+              : a.contract_status === 'returned' ? 'background:#f8fafc'
+              : !a.emp_bu_code                   ? 'background:#fffbeb' : '';
+  const userCell = a.user_name
+    ? `<strong>${esc(a.user_name)}</strong>${!a.employee_id ? ' <span style="font-size:.68rem;color:#ef4444">(ไม่พบใน HR)</span>' : ''}`
+    : '<em style="color:#cbd5e1">ไม่ระบุ</em>';
+
+  const cols = `
+    <td style="padding:6px 10px;font-size:.75rem;color:#64748b;font-family:monospace;white-space:nowrap">${esc(a.asset_no)||'—'}</td>
+    <td style="padding:6px 10px"><code style="font-size:.78rem;color:#334155">${esc(a.computer_id)||'—'}</code></td>
+    <td style="padding:6px 10px;font-size:.75rem;color:#64748b;font-family:monospace;white-space:nowrap">${esc(a.serial_no)||'—'}</td>
+    <td style="padding:6px 10px;text-align:center;white-space:nowrap">${_srcBadge(a)}</td>
+    <td style="padding:6px 10px;font-size:.78rem">${esc(a.asset_type)||'—'}</td>
+    <td style="padding:6px 10px;white-space:nowrap">${ownershipBadge(a)}</td>
+    <td style="padding:6px 10px;font-size:.78rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.model)||''}">${esc(a.model)||esc(a.brand)||'—'}</td>
+    <td style="padding:6px 10px;font-size:.82rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.user_name)||''}">${userCell}</td>
+    <td style="padding:6px 10px;white-space:nowrap"><span class="bu-badge bu-${esc(a.emp_bu_code)}">${esc(a.emp_bu_code)||'—'}</span></td>
+    <td style="padding:6px 10px;font-size:.78rem;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.emp_dept)||''}">${esc(a.emp_dept)||'—'}</td>
+    <td style="padding:6px 10px;white-space:nowrap;font-size:.8rem">${_dateFmt(a.end_date)}</td>
+    <td style="padding:6px 10px;text-align:center;white-space:nowrap">${_contractPill(a)}</td>
+    ${showEdStatus ? `<td style="padding:6px 10px;text-align:center">${_edBadge(a.edevice_status)}</td>` : ''}
+    <td style="padding:6px 10px;text-align:right;font-size:.8rem;font-weight:600">${a.monthly_charge ? '฿'+a.monthly_charge.toLocaleString() : '฿0'}</td>`;
+
+  return `<tr style="border-bottom:1px solid #f1f5f9;${rowBg}">${cols}</tr>`;
+}
+
 // ---- State ----
 let currentPage = 1;
 let totalPages  = 1;
@@ -6,7 +110,8 @@ let buMap       = {};  // bu_code -> bu name
 
 // ---- Asset State ----
 let assetLoaded = false;
-let assetFilters = { q: '', type: '', bu: '', status: '', ownership: '' };
+let assetFilters = { q: '', type: '', bu: '', status: '', ownership: '', position: '', dept: '' };
+let _assetRawData = null;   // cache ผลดิบจาก API สำหรับ toggle hide-return
 
 // ---- Transfer State ----
 let transferFromEmpId = null;
@@ -349,14 +454,22 @@ async function loadAssetMeta() {
   const typeSel = document.getElementById('a-filter-type');
   d.types.forEach(t => typeSel.insertAdjacentHTML('beforeend', `<option value="${t}">${t}</option>`));
 
+  // populate position filter
+  const posSel = document.getElementById('a-filter-position');
+  (d.positions || []).forEach(p => posSel.insertAdjacentHTML('beforeend', `<option value="${esc(p)}">${esc(p)}</option>`));
+
+  // populate dept filter
+  const deptSel = document.getElementById('a-filter-dept');
+  (d.depts || []).forEach(dep => deptSel.insertAdjacentHTML('beforeend', `<option value="${esc(dep)}">${esc(dep)}</option>`));
+
   // populate BU filter from existing buMap (loaded with employees)
   const buSel = document.getElementById('a-filter-bu');
   Object.entries(buMap).forEach(([code, name]) => {
     buSel.insertAdjacentHTML('beforeend', `<option value="${code}">${code}</option>`);
   });
 
-  // wire up filter events
-  ['a-search', 'a-filter-type', 'a-filter-bu', 'a-filter-status', 'a-filter-ownership'].forEach(id => {
+  // wire up filter events (fetch ใหม่เมื่อ filter เปลี่ยน)
+  ['a-search', 'a-filter-type', 'a-filter-bu', 'a-filter-status', 'a-filter-ownership', 'a-filter-position', 'a-filter-dept'].forEach(id => {
     const el = document.getElementById(id);
     const evt = el.tagName === 'INPUT' ? 'input' : 'change';
     el.addEventListener(evt, () => {
@@ -365,9 +478,44 @@ async function loadAssetMeta() {
       assetFilters.bu        = document.getElementById('a-filter-bu').value;
       assetFilters.status    = document.getElementById('a-filter-status').value;
       assetFilters.ownership = document.getElementById('a-filter-ownership').value;
+      assetFilters.position  = document.getElementById('a-filter-position').value;
+      assetFilters.dept      = document.getElementById('a-filter-dept').value;
       loadAssets();
     });
   });
+
+  // checkbox / dropdown ที่ filter ฝั่ง client — toggle ทันทีโดยไม่ fetch ใหม่
+  ['a-filter-return', 'a-filter-resigned', 'a-filter-no-owner', 'a-filter-missing-edevice'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      if (_assetRawData) renderAssetTable(_assetRawData);
+    });
+  });
+  document.getElementById('a-filter-ed-status').addEventListener('change', () => {
+    if (_assetRawData) renderAssetTable(_assetRawData);
+  });
+}
+
+async function updateSheetsInfo() {
+  const btn = document.getElementById('sheets-update-btn');
+  const orig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<span style="font-size:.75rem">⏳ กำลังอัพเดท...</span>`;
+
+  try {
+    const res  = await fetch('/api/sheets/update-info', { method: 'POST' });
+    const data = await res.json();
+
+    if (data.ok) {
+      btn.innerHTML = `<span style="color:#16a34a;font-size:.75rem">✓ อัพเดท ${data.updated} แถว</span>`;
+      setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 4000);
+    } else {
+      btn.innerHTML = `<span style="color:#dc2626;font-size:.75rem">✕ ${data.error || 'ผิดพลาด'}</span>`;
+      setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 5000);
+    }
+  } catch(e) {
+    btn.innerHTML = `<span style="color:#dc2626;font-size:.75rem">✕ ไม่สามารถเชื่อมต่อได้</span>`;
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 5000);
+  }
 }
 
 async function loadAssets(refresh = false) {
@@ -377,6 +525,8 @@ async function loadAssets(refresh = false) {
     bu:        assetFilters.bu,
     status:    assetFilters.status,
     ownership: assetFilters.ownership,
+    position:  assetFilters.position,
+    dept:      assetFilters.dept,
   });
   if (refresh) params.set('refresh', '1');
 
@@ -391,67 +541,121 @@ async function loadAssets(refresh = false) {
     return;
   }
 
-  // update summary cards
-  document.getElementById('a-total').textContent   = d.total.toLocaleString();
-  document.getElementById('a-monthly').textContent = '฿' + (d.total_monthly || 0).toLocaleString('th', {minimumFractionDigits: 0, maximumFractionDigits: 0});
-  const sc = d.status_counts || {};
-  document.getElementById('a-expired').textContent  = (sc.expired  || 0).toLocaleString();
-  document.getElementById('a-critical').textContent = (sc.critical || 0).toLocaleString();
-  document.getElementById('a-warning').textContent  = (sc.warning  || 0).toLocaleString();
-  document.getElementById('a-ok').textContent       = (sc.ok       || 0).toLocaleString();
+  // summary cards จะอัพเดทหลัง filter ใน renderAssetTable()
 
   if (d.cached_at) {
     document.getElementById('a-cache-info').textContent = `ข้อมูล ณ ${d.cached_at}`;
   }
 
+  _assetRawData = d;
+  renderAssetTable(d);
+}
+
+function renderAssetTable(d) {
+  const onlyReturn    = document.getElementById('a-filter-return')?.checked ?? false;
+  const onlyResigned  = document.getElementById('a-filter-resigned')?.checked ?? false;
+  const onlyNoOwner        = document.getElementById('a-filter-no-owner')?.checked ?? false;
+  const onlyMissingEdevice = document.getElementById('a-filter-missing-edevice')?.checked ?? false;
+  const edStatusF     = (document.getElementById('a-filter-ed-status')?.value || '').toLowerCase();
+
+  let assets = d.assets;
+  if (edStatusF)   assets = assets.filter(a => (a.edevice_status || '').toLowerCase() === edStatusF);
+  if (onlyReturn)  assets = assets.filter(a =>
+    (a.edevice_status || '').toLowerCase() === 'return' ||
+    a.contract_status === 'returned'
+  );
+  if (onlyResigned)        assets = assets.filter(a => a.user_name && !a.employee_id);
+  if (onlyNoOwner)         assets = assets.filter(a => !a.user_name);
+  if (onlyMissingEdevice)  assets = assets.filter(a => a.ownership_missing_edevice);
+
+  // ── อัพเดท summary cards ──────────────────────────────────────────
+  // a-total = ยอดรวมทั้งหมดก่อน filter (เพื่อให้ตรงกับ eDevice sync)
+  const shown = assets.length;
+  const totalAll = d.assets.length;   // รวมทุกเครื่องก่อน filter
+  const missingEdevice = d.assets.filter(a => a.ownership_missing_edevice).length;
+  const monthly = assets.reduce((s, a) => s + (a.monthly_charge || 0), 0);
+  const sc = { expired: 0, critical: 0, warning: 0, ok: 0 };
+  assets.forEach(a => {
+    const isBought = a.ownership === 'ซื้อ';
+    if (!isBought && sc[a.contract_status] !== undefined) sc[a.contract_status]++;
+  });
+  document.getElementById('a-total').textContent    = totalAll.toLocaleString();
+  const missingEl = document.getElementById('a-total-missing-edevice');
+  if (missingEdevice > 0) {
+    missingEl.textContent = `⚠ ยังไม่บันทึกใน eDevice ${missingEdevice} เครื่อง`;
+    missingEl.style.display = '';
+  } else {
+    missingEl.style.display = 'none';
+  }
+  document.getElementById('a-monthly').textContent  = '฿' + monthly.toLocaleString('th', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+  document.getElementById('a-expired').textContent  = sc.expired.toLocaleString();
+  document.getElementById('a-critical').textContent = sc.critical.toLocaleString();
+  document.getElementById('a-warning').textContent  = sc.warning.toLocaleString();
+  document.getElementById('a-ok').textContent       = sc.ok.toLocaleString();
+  const notes = [];
+  if (edStatusF)           notes.push(`eDevice: ${edStatusF}`);
+  if (onlyReturn)          notes.push(`เฉพาะเครื่อง Return ${shown} เครื่อง`);
+  if (onlyResigned)        notes.push(`เฉพาะลาออก ${shown} เครื่อง`);
+  if (onlyNoOwner)         notes.push(`ไม่มีผู้ถือครอง ${shown} เครื่อง`);
+  if (onlyMissingEdevice)  notes.push(`ยังไม่บันทึกใน eDevice ${shown} เครื่อง`);
+  const hiddenNote = notes.length ? ` · ${notes.join(' · ')}` : '';
+  const shownLabel = shown < totalAll
+    ? `แสดง ${shown.toLocaleString()} / ${totalAll.toLocaleString()} รายการ`
+    : `แสดง ${shown.toLocaleString()} รายการ`;
   document.getElementById('a-result-info').textContent =
-    `แสดง ${d.total.toLocaleString()} รายการ · ค่าเช่ารวม ฿${(d.total_monthly||0).toLocaleString('th', {minimumFractionDigits:2})} / เดือน`;
+    `${shownLabel} · ค่าเช่ารวม ฿${monthly.toLocaleString('th', {minimumFractionDigits:2})} / เดือน${hiddenNote}`;
 
   const tbody = document.getElementById('asset-tbody');
   const empty = document.getElementById('a-empty');
 
-  if (!d.assets.length) {
+  if (!assets.length) {
     tbody.innerHTML = '';
     empty.style.display = '';
     return;
   }
   empty.style.display = 'none';
+  // reassign local variable for the render loop below
+  d = { ...d, assets };
 
   const statusLabel = (a) => {
+    if (a.ownership === 'ซื้อ') {
+      if ((a.edevice_status||'').toLowerCase() === 'expire') return '🗑 ตัดจำหน่าย';
+      return '🏷 เครื่องซื้อ';
+    }
     const d = a.days_remaining;
+    if (a.contract_status === 'returned') return '↩ คืนแล้ว';
     if (a.contract_status === 'expired')  return `🔴 เกินกำหนด ${Math.abs(d)} วัน`;
     if (a.contract_status === 'critical') return `🟠 เหลือ ${d} วัน`;
     if (a.contract_status === 'warning')  return `🟡 เหลือ ${d} วัน`;
     if (a.contract_status === 'ok')       return d !== null ? `🟢 เหลือ ${d} วัน` : '🟢 ปกติ';
     return '— ไม่ระบุ';
   };
-  const pillClass   = { expired: 'pill-expired', critical: 'pill-critical', warning: 'pill-warning', ok: 'pill-ok', unknown: 'pill-unknown' };
+
+  // eDevice status badge (Active/Expire/Return/Spare/Error)
+  const ED_STATUS_CFG = {
+    active:  { bg: '#dcfce7', color: '#15803d', label: '● Active'  },
+    expire:  { bg: '#fef9c3', color: '#854d0e', label: '⚠ Expire'  },
+    return:  { bg: '#f1f5f9', color: '#475569', label: '↩ Return'  },
+    spare:   { bg: '#ede9fe', color: '#6d28d9', label: '◎ Spare'   },
+    error:   { bg: '#fee2e2', color: '#b91c1c', label: '✕ Error'   },
+  };
+  const edStatusBadge = (s) => {
+    if (!s) return '<span style="color:#cbd5e1">—</span>';
+    const c = ED_STATUS_CFG[s.toLowerCase()] || { bg:'#f1f5f9', color:'#475569', label: s };
+    return `<span style="font-size:.72rem;padding:2px 8px;border-radius:5px;font-weight:600;background:${c.bg};color:${c.color}">${c.label}</span>`;
+  };
+  const pillClass   = { expired: 'pill-expired', critical: 'pill-critical', warning: 'pill-warning', ok: 'pill-ok', unknown: 'pill-unknown', bought: 'pill-bought' };
   const daysClass   = { expired: 'days-expired', critical: 'days-critical', warning: 'days-warning', ok: 'days-ok' };
   const rowClass    = { expired: 'contract-expired', critical: 'contract-critical', warning: 'contract-warning' };
-  const resLabel    = {
-    pending:          '⏳ ยังไม่ดำเนินการ',
-    returned:         '📦 คืนแล้ว',
-    bought:           '🛒 ซื้อแล้ว',
-    renewed:          '🔄 ต่อสัญญาแล้ว',
-    buy_requested:    '📋 รอขอซื้อ',
-    renew_requested:  '📋 รอต่อสัญญา',
-  };
-  const resClass    = {
-    pending: 'res-pending', returned: 'res-returned', bought: 'res-bought',
-    renewed: 'res-renewed', buy_requested: 'res-buy_requested', renew_requested: 'res-renew_requested',
-  };
-
   tbody.innerHTML = d.assets.map((a, i) => {
-    const st = a.contract_status;
+    const isBought = a.ownership === 'ซื้อ';
+    const st = isBought ? 'bought' : a.contract_status;
 
     const buBadge = a.emp_bu_code
       ? `<span class="bu-badge bu-${esc(a.emp_bu_code)}">${esc(a.emp_bu_code)}</span>`
       : `<span style="color:#cbd5e1">—</span>`;
 
     const deptText = a.emp_dept || a.dept_sheet || '—';
-
-    const custShort = (a.customer_name || '')
-      .replace('อมรินทร์ ', '').replace(' จำกัด', '').replace(' (มหา', '');
 
     const endFmt = a.end_date
       ? new Date(a.end_date).toLocaleDateString('th-TH', {day:'numeric', month:'short', year:'2-digit'})
@@ -461,25 +665,33 @@ async function loadAssets(refresh = false) {
       ? `<code style="font-size:.75rem;color:#334155">${esc(a.computer_id)}</code>`
       : '<span style="color:#cbd5e1">—</span>';
 
+    const C = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap'; // shorthand
     return `<tr class="${rowClass[st] || ''}">
-      <td style="color:#94a3b8">${i+1}</td>
-      <td><code style="font-size:.78rem;color:#334155">${esc(a.asset_no)}</code></td>
-      <td>${computerIdHtml}</td>
-      <td><code style="font-size:.75rem;color:#64748b">${esc(a.serial_no) || '—'}</code></td>
-      <td style="white-space:nowrap">${esc(a.asset_type)}</td>
-      <td style="white-space:nowrap">${a.ownership === 'เช่า'
-        ? '<span style="font-size:.72rem;background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:5px;font-weight:600">เช่า</span>'
-        : a.ownership === 'ซื้อ'
-        ? '<span style="font-size:.72rem;background:#dcfce7;color:#15803d;padding:2px 7px;border-radius:5px;font-weight:600">ซื้อ</span>'
-        : '<span style="color:#cbd5e1">—</span>'}</td>
-      <td style="font-size:.8rem">${esc(a.model)}</td>
-      <td><strong>${esc(a.user_name) || '<span style="color:#94a3b8">ไม่ระบุ</span>'}</strong></td>
-      <td>${buBadge}</td>
-      <td style="font-size:.78rem;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(deptText)}">${esc(deptText)}</td>
-      <td style="font-size:.75rem;color:#64748b;white-space:nowrap">${esc(custShort)}</td>
-      <td style="white-space:nowrap;font-size:.82rem">${endFmt}</td>
-      <td><span class="status-pill ${pillClass[st] || 'pill-unknown'}">${statusLabel(a)}</span></td>
-      <td>${renderResolution(a, resLabel, resClass)}</td>
+      <td style="color:#94a3b8;font-size:.75rem">${i+1}</td>
+      <td style="${C}" title="${esc(a.asset_no)}"><code style="font-size:.75rem;color:#334155">${esc(a.asset_no)}</code></td>
+      <td style="${C}" title="${esc(a.computer_id)}">${computerIdHtml}</td>
+      <td style="${C}" title="${esc(a.serial_no)}"><code style="font-size:.73rem;color:#64748b">${esc(a.serial_no) || '—'}</code></td>
+      <td style="text-align:center">
+        ${a.edevice_matched && a.sheets_matched
+          ? '<span style="font-size:.65rem;background:#dcfce7;color:#15803d;padding:1px 5px;border-radius:4px;font-weight:600;white-space:nowrap">eDevice+Sheets</span>'
+          : a.edevice_matched
+          ? '<span style="font-size:.65rem;background:#dbeafe;color:#1d4ed8;padding:1px 5px;border-radius:4px;font-weight:600">eDevice</span>'
+          : a.sheets_matched
+          ? '<span style="font-size:.65rem;background:#fef9c3;color:#854d0e;padding:1px 5px;border-radius:4px;font-weight:600">Sheets</span> <span style="font-size:.65rem;background:#fee2e2;color:#b91c1c;padding:1px 5px;border-radius:3px;font-weight:600;cursor:default" title="ไม่มีข้อมูลในระบบ eDevice — กรุณาเพิ่มเครื่องนี้ใน eDevice">+eDevice</span>'
+          : '<span style="color:#cbd5e1">—</span>'}
+      </td>
+      <td style="${C};font-size:.78rem">${esc(a.asset_type)}</td>
+      <td style="text-align:center">${
+        ownershipBadge(a)
+      }</td>
+      <td style="${C};font-size:.8rem" title="${esc(a.model)}">${esc(a.model)}</td>
+      <td style="${C};font-size:.82rem" title="${esc(a.user_name)}"><strong>${esc(a.user_name) || '<span style="color:#94a3b8">—</span>'}</strong>${a.user_name && !a.employee_id ? ' <span style="font-size:.68rem;color:#ef4444;font-weight:600">(ไม่พบใน HR)</span>' : ''}</td>
+      <td style="${C};font-size:.73rem;color:#64748b" title="${esc(a.emp_position)}">${esc(a.emp_position) || '<span style="color:#cbd5e1">—</span>'}</td>
+      <td style="text-align:center">${buBadge}</td>
+      <td style="${C};font-size:.75rem;color:#64748b" title="${esc(deptText)}">${esc(deptText)}</td>
+      <td style="${C};font-size:.78rem;white-space:nowrap">${endFmt}</td>
+      <td><span class="status-pill ${pillClass[st] || 'pill-unknown'}" style="font-size:.7rem;padding:2px 6px">${statusLabel(a)}</span></td>
+      <td style="text-align:center">${edStatusBadge(a.edevice_status)}</td>
       <td style="text-align:right;font-size:.8rem;color:#374151">฿${(a.monthly_charge||0).toLocaleString()}</td>
     </tr>`;
   }).join('');
@@ -518,31 +730,56 @@ async function showAssetDetail(empId, empName) {
       '<div style="text-align:center;padding:24px;color:#16a34a;font-size:.85rem">✓ ไม่มีทรัพย์สินที่ถือครองอยู่</div>';
     return;
   }
-  document.getElementById('ad-list').innerHTML = assets.map(a => {
-    const endFmt = a.end_date
-      ? new Date(a.end_date).toLocaleDateString('th-TH', {day:'numeric',month:'short',year:'2-digit'})
-      : '—';
-    const st = a.contract_status;
-    const pillCls = {expired:'pill-expired',critical:'pill-critical',warning:'pill-warning',ok:'pill-ok'};
-    const stLabel = (a) => {
-      const d = a.days_remaining;
-      if (st==='expired')  return `🔴 เกินกำหนด ${Math.abs(d)} วัน`;
-      if (st==='critical') return `🟠 เหลือ ${d} วัน`;
-      if (st==='warning')  return `🟡 เหลือ ${d} วัน`;
-      return d!=null ? `🟢 เหลือ ${d} วัน` : '🟢 ปกติ';
-    };
-    return `<div style="padding:12px 16px;border-bottom:1px solid #f1f5f9;display:flex;flex-direction:column;gap:4px">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="background:#f1f5f9;border-radius:6px;padding:2px 7px;font-size:.72rem;color:#475569">${esc(a.asset_type)}</span>
-        <strong style="font-size:.85rem">${esc(a.model)}</strong>
-        <code style="font-size:.75rem;color:#94a3b8">${esc(a.serial_no)}</code>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;font-size:.78rem;color:#64748b">
-        <span>หมดสัญญา: ${endFmt}</span>
-        <span class="status-pill ${pillCls[st]||'pill-unknown'}">${stLabel(a)}</span>
-      </div>
-    </div>`;
+  const LB = 'width:130px;min-width:130px;padding:7px 14px 7px 16px;font-size:.75rem;font-weight:600;color:#64748b;vertical-align:middle;border-bottom:1px solid #f1f5f9;white-space:nowrap';
+  const VB = 'padding:7px 16px 7px 10px;font-size:.82rem;color:#1e293b;vertical-align:middle;border-bottom:1px solid #f1f5f9';
+
+  const adCards = assets.map((a, idx) => {
+    const borderColor = a.contract_status === 'expired'  ? '#fca5a5'
+                      : a.contract_status === 'critical' ? '#fdba74'
+                      : a.contract_status === 'returned' ? '#cbd5e1'
+                      : '#c7d2fe';
+    const headerBg    = a.contract_status === 'expired'  ? '#fff1f2'
+                      : a.contract_status === 'critical' ? '#fff7ed'
+                      : a.contract_status === 'returned' ? '#f8fafc'
+                      : '#eef2ff';
+
+    const rows = [
+      ['Asset No.',      `<span style="font-family:monospace;color:#475569;font-size:.82rem">${esc(a.asset_no)||'—'}</span>`],
+      ['รหัสเครื่อง',   `<code style="color:#334155;font-size:.82rem">${esc(a.computer_id)||'—'}</code>`],
+      ['Serial No.',     `<span style="font-family:monospace;color:#475569;font-size:.82rem">${esc(a.serial_no)||'—'}</span>`],
+      ['แหล่งข้อมูล',   _srcBadge(a)],
+      ['ประเภท',         esc(a.asset_type)||'—'],
+      ['ประเภทสัญญา',   ownershipBadge(a)],
+      ['ยี่ห้อ / รุ่น',  `${esc(a.brand)||''} ${esc(a.model)||''}`.trim() || '—'],
+      ['แผนก',           esc(a.emp_dept)||'—'],
+      ['วันเริ่มสัญญา',  _dateFmt(a.start_date)],
+      ['วันหมดสัญญา',   _dateFmt(a.end_date)],
+      ['สถานะสัญญา',    _contractPill(a)],
+      ['สถานะ eDevice',  _edBadge(a.edevice_status)],
+      ['ค่าเช่า/เดือน',  a.monthly_charge ? `<strong style="color:#1e293b">฿${a.monthly_charge.toLocaleString()}</strong>` : '<span style="color:#94a3b8">฿0</span>'],
+    ];
+
+    return `
+      <div style="border:1.5px solid ${borderColor};border-radius:12px;overflow:hidden;background:#fff;${idx > 0 ? 'margin-top:14px' : ''}">
+        <div style="background:${headerBg};padding:10px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid ${borderColor}">
+          <span style="font-size:.8rem;font-weight:700;color:#475569">#${idx+1}</span>
+          <span style="font-weight:700;font-size:.9rem;color:#1e293b">${esc(a.model)||esc(a.brand)||'ไม่ระบุรุ่น'}</span>
+          <span style="font-size:.72rem;background:#fff;border:1px solid ${borderColor};border-radius:5px;padding:1px 8px;color:#64748b">${esc(a.asset_type)||''}</span>
+          <span style="margin-left:auto">${_contractPill(a)}</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <tbody>
+            ${rows.map(([label, val]) => `
+              <tr style="border-bottom:1px solid #f1f5f9">
+                <td style="width:130px;padding:8px 12px 8px 16px;font-size:.74rem;font-weight:600;color:#94a3b8;white-space:nowrap;vertical-align:middle">${label}</td>
+                <td style="padding:8px 16px 8px 8px;font-size:.82rem;color:#1e293b;vertical-align:middle">${val}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
   }).join('');
+
+  document.getElementById('ad-list').innerHTML = `<div style="padding:16px">${adCards}</div>`;
 }
 
 function closeAssetDetail() {
@@ -1029,6 +1266,7 @@ async function loadRentalDashboard() {
   document.getElementById('r-expired').textContent  = (sc.expired  || 0).toLocaleString();
   document.getElementById('r-critical').textContent = (sc.critical || 0).toLocaleString();
   document.getElementById('r-warning').textContent  = (sc.warning  || 0).toLocaleString();
+  document.getElementById('r-ok').textContent       = (sc.ok       || 0).toLocaleString();
   document.getElementById('r-unknown').textContent  = (sc.unknown  || 0).toLocaleString();
 
   // helper: ย่อตัวเลขเงิน เช่น 461999 → "462K"
@@ -1076,38 +1314,100 @@ async function loadRentalDashboard() {
     </div>`;
   }).join('');
 
-  // Timeline — bar height proportional, count label floating on top of bar
-  if (d.timeline.length) {
-    const maxT = Math.max(...d.timeline.map(t => t.count), 1);
-    const BAR_AREA = 100; // px — พื้นที่วาดแท่ง
+  // ── helper: สร้าง mini timeline chart จาก list of {month, count} ──
+  const BU_COLOR = {
+    'AOMNI':'#6366f1','AMTV':'#0ea5e9','APRINT':'#10b981',
+    'APUB':'#f59e0b','ABOOK':'#ec4899','ACS':'#8b5cf6',
+    'AME':'#f97316','—':'#94a3b8',
+  };
+  // ── expand panel สำหรับ timeline bar click ──
+  let _tlExpandKey = null;  // track ว่า panel ไหนเปิดอยู่
+
+  const renderTimelineExpand = (key, bu, rentalIndex) => {
+    const rows = rentalIndex[key] || [];
+    if (!rows.length) return '';
+    const csColor = { expired:'#dc2626', critical:'#f97316', warning:'#eab308', ok:'#16a34a', unknown:'#94a3b8' };
+    const csLabel = { expired:'เกินกำหนด', critical:'ใกล้หมด', warning:'เฝ้าระวัง', ok:'ปกติ', unknown:'ไม่ระบุ' };
+    const rowsHtml = rows.map(r => {
+      const d = r.days_remaining;
+      const dStr = d === null ? '—' : d < 0 ? `เกิน ${Math.abs(d)} วัน` : `เหลือ ${d} วัน`;
+      const endFmt = r.end_date ? new Date(r.end_date).toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'2-digit'}) : '—';
+      return `<tr style="border-bottom:1px solid #f1f5f9;font-size:.78rem">
+        <td style="padding:5px 8px"><code style="font-size:.72rem;color:#334155">${esc(r.computer_id)||'—'}</code></td>
+        <td style="padding:5px 8px">${esc(r.asset_type)} ${esc(r.model)}</td>
+        <td style="padding:5px 8px"><strong>${esc(r.user_name)||'—'}</strong></td>
+        <td style="padding:5px 8px;color:#64748b;font-size:.75rem">${esc(r.emp_dept)||'—'}</td>
+        <td style="padding:5px 8px;white-space:nowrap">${endFmt}</td>
+        <td style="padding:5px 8px;white-space:nowrap;color:${csColor[r.contract_status]||'#64748b'};font-weight:600;font-size:.75rem">${dStr}</td>
+        <td style="padding:5px 8px;text-align:right;color:#374151">฿${(r.monthly_charge||0).toLocaleString()}</td>
+      </tr>`;
+    }).join('');
+    return `<div style="margin-top:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;background:#fff">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#f8fafc;font-size:.72rem;color:#64748b">
+          <th style="padding:6px 8px;text-align:left">รหัสเครื่อง</th>
+          <th style="padding:6px 8px;text-align:left">ประเภท/รุ่น</th>
+          <th style="padding:6px 8px;text-align:left">ผู้ถือครอง</th>
+          <th style="padding:6px 8px;text-align:left">แผนก</th>
+          <th style="padding:6px 8px;text-align:left">วันหมด</th>
+          <th style="padding:6px 8px;text-align:left">สถานะ</th>
+          <th style="padding:6px 8px;text-align:right">฿/เดือน</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>`;
+  };
+
+  const makeTimelineCols = (rows, barColor, BAR_AREA = 90, buKey = 'ALL', rentalIndex = {}) => {
+    const maxT = Math.max(...rows.map(t => t.count), 1);
     const statusColor = (month) => {
       const today = new Date();
       const [y, m] = month.split('-').map(Number);
       const diff = (y - today.getFullYear()) * 12 + (m - today.getMonth() - 1);
-      if (diff < 0)   return '#dc2626';
-      if (diff <= 3)  return '#f97316';
-      if (diff <= 6)  return '#eab308';
-      return '#2563eb';
+      if (diff < 0)  return '#dc2626';
+      if (diff <= 3) return '#f97316';
+      if (diff <= 6) return '#eab308';
+      return barColor || '#2563eb';
     };
-    const cols = d.timeline.map(t => {
-      const h  = Math.max(Math.round((t.count / maxT) * BAR_AREA), 4);
-      const color = statusColor(t.month);
+    return rows.map(t => {
+      if (t.count === 0) {
+        const label = new Date(t.month + '-01').toLocaleDateString('th-TH', {month:'short', year:'2-digit'});
+        return `<div class="timeline-col" style="position:relative;opacity:.3">
+          <div class="timeline-bar-wrap" style="height:${BAR_AREA}px;align-items:flex-end;display:flex;width:100%">
+            <div style="height:2px;background:#e2e8f0;width:100%"></div>
+          </div>
+          <div class="timeline-label">${label}</div>
+        </div>`;
+      }
+      const h = Math.max(Math.round((t.count / maxT) * BAR_AREA), 4);
+      const color = barColor ? (BU_COLOR[barColor] || barColor) : statusColor(t.month);
       const label = new Date(t.month + '-01').toLocaleDateString('th-TH', {month:'short', year:'2-digit'});
-      const tip = `${t.month}: ${t.count} เครื่อง  ฿${Math.round(t.monthly||0).toLocaleString()}/เดือน`;
-      return `<div class="timeline-col" title="${tip}" style="position:relative">
+      const expandKey = `${t.month}|${buKey}`;
+      const expandId  = `tl-expand-${expandKey.replace(/[|-]/g,'_')}`;
+      return `<div class="timeline-col" style="position:relative">
         <div class="timeline-bar-wrap" style="height:${BAR_AREA}px;align-items:flex-end;display:flex;width:100%">
-          <div class="timeline-bar" style="height:${h}px;background:${color};width:100%;position:relative">
-            <span style="position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:.68rem;font-weight:700;color:#1e293b;white-space:nowrap">${t.count}</span>
+          <div class="timeline-bar" data-expand="${expandId}" data-key="${expandKey}" data-bu="${buKey}"
+               style="height:${h}px;background:${color};width:100%;position:relative;cursor:pointer;transition:opacity .15s"
+               onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'"
+               onclick="toggleTimelineExpand(this, '${expandKey}', '${buKey}')">
+            <span style="position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:.65rem;font-weight:700;color:#1e293b;white-space:nowrap">${t.count}</span>
           </div>
         </div>
         <div class="timeline-label">${label}</div>
       </div>`;
     }).join('');
+  };
+
+  const rentalIndex = d.rental_index || {};
+
+  // Timeline รวม (ทุก BU)
+  if (d.timeline.length) {
     document.getElementById('r-timeline').innerHTML = `
       <div style="overflow-x:auto;padding-top:20px">
-        <div class="timeline-wrap" style="padding-bottom:4px">${cols}</div>
+        <div class="timeline-wrap" style="padding-bottom:4px">${makeTimelineCols(d.timeline, null, 90, 'ALL', rentalIndex)}</div>
       </div>
-      <div style="display:flex;gap:16px;margin-top:10px;font-size:.72rem;color:#64748b">
+      <div id="tl-expand-all-wrap"></div>
+      <div style="display:flex;gap:16px;margin-top:8px;font-size:.72rem;color:#64748b">
         <span><span style="display:inline-block;width:10px;height:10px;background:#dc2626;border-radius:2px;margin-right:3px"></span>หมดแล้ว</span>
         <span><span style="display:inline-block;width:10px;height:10px;background:#f97316;border-radius:2px;margin-right:3px"></span>&lt;3 เดือน</span>
         <span><span style="display:inline-block;width:10px;height:10px;background:#eab308;border-radius:2px;margin-right:3px"></span>&lt;6 เดือน</span>
@@ -1117,6 +1417,30 @@ async function loadRentalDashboard() {
     document.getElementById('r-timeline').innerHTML =
       '<div style="text-align:center;padding:24px;color:#94a3b8;font-size:.82rem">ไม่มีข้อมูล timeline</div>';
   }
+
+  // Timeline แยก BU — คนละกรอบ
+  const tbl = d.timeline_by_bu || [];
+  document.getElementById('r-timeline-by-bu').innerHTML = tbl.map(b => {
+    const hasData = b.months.some(m => m.count > 0);
+    if (!hasData) return '';
+    const color = BU_COLOR[b.bu_code] || '#94a3b8';
+    const cols  = makeTimelineCols(b.months, b.bu_code, 80, b.bu_code, rentalIndex);
+    const total = b.months.reduce((s, m) => s + m.count, 0);
+    const safeId = b.bu_code.replace(/[^a-zA-Z0-9]/g,'_');
+    return `<div style="margin-top:16px;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;background:#fafafa">
+      <div style="font-size:.8rem;font-weight:700;color:${color};margin-bottom:6px">
+        <span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:50%;margin-right:5px"></span>
+        ${b.bu_code} <span style="font-weight:400;color:#94a3b8;margin-left:6px">${total} เครื่อง</span>
+      </div>
+      <div style="overflow-x:auto;padding-top:20px">
+        <div class="timeline-wrap" style="padding-bottom:4px">${cols}</div>
+      </div>
+      <div id="tl-expand-bu-wrap-${safeId}"></div>
+    </div>`;
+  }).join('');
+
+  // เก็บ rentalIndex ไว้ให้ toggleTimelineExpand ใช้
+  window._tlRentalIndex = rentalIndex;
 
   // Urgent table
   const tbody = document.getElementById('r-urgent-tbody');
@@ -1133,77 +1457,157 @@ async function loadRentalDashboard() {
     if (a.contract_status === 'critical') return `🟠 เหลือ ${a.days_remaining} วัน`;
     return '';
   };
+  const edBadgeCfg = {
+    active:  { bg: '#dcfce7', color: '#15803d', label: '● Active'  },
+    expire:  { bg: '#fef9c3', color: '#854d0e', label: '⚠ Expire'  },
+    return:  { bg: '#f1f5f9', color: '#475569', label: '↩ Return'  },
+    spare:   { bg: '#ede9fe', color: '#6d28d9', label: '◎ Spare'   },
+    error:   { bg: '#fee2e2', color: '#b91c1c', label: '✕ Error'   },
+  };
+  const edBadge = (s) => {
+    if (!s) return '—';
+    const c = edBadgeCfg[s.toLowerCase()] || { bg:'#f1f5f9', color:'#475569', label: s };
+    return `<span style="font-size:.72rem;padding:2px 7px;border-radius:5px;font-weight:600;background:${c.bg};color:${c.color}">${c.label}</span>`;
+  };
+  const dateFmt = d => d
+    ? new Date(d).toLocaleDateString('th-TH', {day:'numeric', month:'short', year:'2-digit'})
+    : '—';
+
   tbody.innerHTML = d.urgent.map(a => {
-    const endFmt = a.end_date
-      ? new Date(a.end_date).toLocaleDateString('th-TH', {day:'numeric',month:'short',year:'2-digit'})
-      : '—';
-    return `<tr>
-      <td><code style="font-size:.78rem">${esc(a.computer_id) || '—'}</code></td>
-      <td style="font-size:.8rem">${esc(a.model) || esc(a.brand)}</td>
-      <td><strong>${esc(a.user_name) || '<span style="color:#94a3b8">ไม่ระบุ</span>'}</strong></td>
-      <td><span class="bu-badge bu-${esc(a.emp_bu_code)}">${esc(a.emp_bu_code) || '—'}</span></td>
-      <td style="font-size:.78rem;color:#64748b">${esc(a.emp_dept) || '—'}</td>
-      <td style="white-space:nowrap;font-size:.82rem">${endFmt}</td>
-      <td style="text-align:center"><span class="status-pill ${pillCls[a.contract_status]||''}">${pillLabel(a)}</span></td>
-      <td style="text-align:right;font-size:.8rem">฿${(a.monthly_charge||0).toLocaleString()}</td>
+    const ownershipCell = ownershipBadge(a);
+
+    const typeModel = [esc(a.asset_type), esc(a.model)||esc(a.brand)].filter(Boolean).join(' ');
+    const rowBg = a.contract_status === 'expired' ? 'background:#fff5f5' : '';
+
+    return `<tr style="border-bottom:1px solid #f1f5f9;${rowBg}">
+      <td style="padding:7px 10px;font-size:.78rem;color:#64748b;font-family:monospace;white-space:nowrap">${esc(a.asset_no)||'—'}</td>
+      <td style="padding:7px 10px"><code style="font-size:.78rem;color:#334155">${esc(a.computer_id)||'—'}</code></td>
+      <td style="padding:7px 10px;font-size:.75rem;color:#64748b;font-family:monospace;white-space:nowrap">${esc(a.serial_no)||'—'}</td>
+      <td style="padding:7px 10px;font-size:.78rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(typeModel)}">${typeModel||'—'}</td>
+      <td style="padding:7px 10px;white-space:nowrap">${ownershipCell}</td>
+      <td style="padding:7px 10px;font-size:.82rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.user_name)||''}">
+        ${a.user_name ? `<strong>${esc(a.user_name)}</strong>` : '<span style="color:#94a3b8">ไม่ระบุ</span>'}
+      </td>
+      <td style="padding:7px 10px;white-space:nowrap"><span class="bu-badge bu-${esc(a.emp_bu_code)}">${esc(a.emp_bu_code)||'—'}</span></td>
+      <td style="padding:7px 10px;font-size:.78rem;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.emp_dept)||''}">${esc(a.emp_dept)||'—'}</td>
+      <td style="padding:7px 10px;white-space:nowrap;font-size:.78rem;color:#94a3b8">${dateFmt(a.start_date)}</td>
+      <td style="padding:7px 10px;white-space:nowrap;font-size:.82rem;font-weight:600">${dateFmt(a.end_date)}</td>
+      <td style="padding:7px 10px;text-align:center;white-space:nowrap">
+        <span class="status-pill ${pillCls[a.contract_status]||''}">${pillLabel(a)}</span>
+      </td>
+      <td style="padding:7px 10px;text-align:center">${edBadge(a.edevice_status)}</td>
+      <td style="padding:7px 10px;text-align:right;font-size:.8rem;font-weight:600">฿${(a.monthly_charge||0).toLocaleString()}</td>
     </tr>`;
   }).join('');
 
-  // ---- Anomaly panel 1: เครื่องเช่าไม่มีข้อมูลสัญญา ----
+  // ── shared helpers อยู่ใน global scope แล้ว (_anomalyHead, _anomalyRow, etc.) ──
+
+  // ---- Anomaly panel 1: ไม่มีข้อมูลสัญญา ----
   const nc = d.no_contract || [];
+  document.getElementById('r-no-contract-head').innerHTML = _anomalyHead(true);
   document.getElementById('r-no-contract-count').textContent =
     nc.length ? `${nc.length} เครื่อง ⚠️` : '0 เครื่อง ✓';
   document.getElementById('r-no-contract-tbody').innerHTML = nc.length
-    ? nc.map(a => `
-      <tr style="border-bottom:1px solid #f1f5f9">
-        <td style="padding:6px 10px"><code style="font-size:.78rem;color:#334155">${esc(a.computer_id)||'—'}</code></td>
-        <td style="padding:6px 10px;font-size:.75rem;color:#64748b;font-family:monospace">${esc(a.serial_no)||'—'}</td>
-        <td style="padding:6px 10px;font-size:.78rem">${esc(a.device_type)||''} ${esc(a.model)||esc(a.brand)||''}</td>
-        <td style="padding:6px 10px;font-size:.82rem">${esc(a.user_name)||'<span style="color:#cbd5e1">—</span>'}</td>
-        <td style="padding:6px 10px"><span class="bu-badge bu-${esc(a.emp_bu_code)}">${esc(a.emp_bu_code)||'—'}</span></td>
-        <td style="padding:6px 10px;font-size:.78rem;color:#64748b">${esc(a.emp_dept)||'—'}</td>
-        <td style="padding:6px 10px;text-align:right;font-size:.8rem;color:#64748b">${a.monthly_charge?'฿'+a.monthly_charge.toLocaleString():'—'}</td>
-      </tr>`).join('')
-    : '<tr><td colspan="7" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ เครื่องเช่าทุกเครื่องมีข้อมูลสัญญาครบ</td></tr>';
+    ? nc.map(a => _anomalyRow(a)).join('')
+    : '<tr><td colspan="14" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ เครื่องเช่าทุกเครื่องมีข้อมูลสัญญาครบ</td></tr>';
 
-  // ---- Anomaly panel 2: เครื่องเช่าที่ไม่มี BU (= กลุ่มเดียวกับ "ไม่ระบุ BU" ในกราฟ) ----
+  // ---- Anomaly panel 2: ไม่มี BU ----
   const nb = d.no_bu || [];
   const nbHasDept = nb.filter(a => a.has_dept).length;
   const nbNoDept  = nb.filter(a => !a.has_dept).length;
+  const nbHasUser = nb.filter(a => a.user_name).length;
 
+  document.getElementById('r-no-bu-head').innerHTML = _anomalyHead(true);
   document.getElementById('r-no-bu-count').textContent =
     nb.length ? `${nb.length} เครื่อง ⚠️` : '0 เครื่อง ✓';
-
-  // sub-summary badges
   document.getElementById('r-no-bu-summary').innerHTML = nb.length ? `
-    <span style="background:#fef3c7;color:#92400e;padding:2px 10px;border-radius:10px">
-      📋 มีแผนก (Sheets) แต่ไม่มี BU: <strong>${nbHasDept}</strong> เครื่อง
-    </span>
-    <span style="background:#fee2e2;color:#991b1b;padding:2px 10px;border-radius:10px">
-      ❌ ไม่มีทั้ง BU และแผนก: <strong>${nbNoDept}</strong> เครื่อง
-    </span>` : '';
-
+    <span style="background:#fef3c7;color:#92400e;padding:2px 10px;border-radius:10px">📋 มีแผนก แต่ไม่มี BU: <strong>${nbHasDept}</strong></span>
+    <span style="background:#fee2e2;color:#991b1b;padding:2px 10px;border-radius:10px">❌ ไม่มีทั้ง BU และแผนก: <strong>${nbNoDept}</strong></span>
+    ${nbHasUser ? `<span style="background:#ede9fe;color:#6d28d9;padding:2px 10px;border-radius:10px">👤 มีชื่อแต่ไม่พบใน HR: <strong>${nbHasUser}</strong></span>` : ''}` : '';
   document.getElementById('r-panel-no-bu').style.display = '';
   document.getElementById('r-no-bu-tbody').innerHTML = nb.length
-    ? nb.map(a => {
-        const endFmt = a.end_date
-          ? new Date(a.end_date).toLocaleDateString('th-TH', {day:'numeric',month:'short',year:'2-digit'})
-          : '—';
-        const deptCell = a.emp_dept
-          ? `<span style="color:#374151">${esc(a.emp_dept)}</span>`
-          : `<span style="color:#fca5a5;font-size:.75rem">ไม่มีข้อมูล</span>`;
-        const rowBg = a.has_dept ? '' : 'background:#fff5f5';
-        return `<tr style="border-bottom:1px solid #f1f5f9;${rowBg}">
-          <td style="padding:6px 10px"><code style="font-size:.78rem;color:#334155">${esc(a.computer_id)||'—'}</code></td>
-          <td style="padding:6px 10px;font-size:.75rem;color:#64748b;font-family:monospace">${esc(a.serial_no)||'—'}</td>
-          <td style="padding:6px 10px;font-size:.78rem">${esc(a.device_type)||''} ${esc(a.model)||esc(a.brand)||''}</td>
-          <td style="padding:6px 10px;font-size:.82rem;color:#94a3b8">${esc(a.user_name)||'<em style="color:#cbd5e1">ไม่ระบุ</em>'}</td>
-          <td style="padding:6px 10px;font-size:.78rem">${deptCell}</td>
-          <td style="padding:6px 10px;white-space:nowrap;font-size:.8rem">${endFmt}</td>
-          <td style="padding:6px 10px;text-align:right;font-size:.8rem;color:#64748b">${a.monthly_charge?'฿'+a.monthly_charge.toLocaleString():'—'}</td>
-        </tr>`;
-      }).join('')
-    : '<tr><td colspan="7" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ เครื่องเช่าทุกเครื่องระบุ BU ครบแล้ว</td></tr>';
+    ? nb.map(a => _anomalyRow(a)).join('')
+    : '<tr><td colspan="14" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ เครื่องเช่าทุกเครื่องระบุ BU ครบแล้ว</td></tr>';
+
+  // ---- Anomaly panel 3: ยังไม่บันทึกใน eDevice ----
+  const me = d.missing_edevice || [];
+  document.getElementById('r-missing-edevice-head').innerHTML = _anomalyHead(false);
+  document.getElementById('r-missing-edevice-badge').textContent = me.length.toLocaleString();
+  document.getElementById('r-missing-edevice-count').textContent =
+    me.length ? `${me.length} เครื่อง ⚠️` : '0 เครื่อง ✓';
+  document.getElementById('r-missing-edevice-tbody').innerHTML = me.length
+    ? me.map(a => _anomalyRow(a, {showEdStatus: false})).join('')
+    : '<tr><td colspan="13" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ ทุกเครื่องมีข้อมูลใน eDevice ครบแล้ว</td></tr>';
+
+  // ---- Anomaly panel 4: eDevice ไม่ระบุการถือครอง (ownership_needs_update) ----
+  const nu = d.needs_update || [];
+  document.getElementById('r-needs-update-head').innerHTML = _anomalyHead(true);
+  document.getElementById('r-needs-update-badge').textContent = nu.length.toLocaleString();
+  document.getElementById('r-needs-update-count').textContent =
+    nu.length ? `${nu.length} เครื่อง ⚠️` : '0 เครื่อง ✓';
+  document.getElementById('r-needs-update-tbody').innerHTML = nu.length
+    ? nu.map(a => _anomalyRow(a)).join('')
+    : '<tr><td colspan="14" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ ทุกเครื่องระบุ เช่า/ซื้อ ครบแล้ว</td></tr>';
+}
+
+function toggleTimelineExpand(barEl, key, bu) {
+  const rentalIndex = window._tlRentalIndex || {};
+  const rows = rentalIndex[key] || [];
+
+  // หา wrap container: ถ้า bu=ALL ใช้ tl-expand-all-wrap ไม่งั้นใช้ wrap ของ BU นั้น
+  const safeId = bu.replace(/[^a-zA-Z0-9]/g,'_');
+  const wrapId = bu === 'ALL' ? 'tl-expand-all-wrap' : `tl-expand-bu-wrap-${safeId}`;
+  const wrap   = document.getElementById(wrapId);
+  if (!wrap) return;
+
+  // ถ้าคลิกซ้ำ key เดิม → ปิด
+  if (wrap.dataset.openKey === key) {
+    wrap.innerHTML = '';
+    wrap.dataset.openKey = '';
+    barEl.style.outline = '';
+    return;
+  }
+
+  // reset outline แท่งเก่า
+  document.querySelectorAll('.timeline-bar[data-bu="' + bu + '"]').forEach(b => b.style.outline = '');
+  barEl.style.outline = '2px solid #1e293b';
+  wrap.dataset.openKey = key;
+
+  const monthLabel = new Date(key.split('|')[0] + '-01').toLocaleDateString('th-TH',{month:'long',year:'numeric'});
+
+  if (!rows.length) {
+    wrap.innerHTML = `<div style="padding:10px;color:#94a3b8;font-size:.8rem">ไม่มีข้อมูล</div>`;
+    return;
+  }
+
+  const rowsHtml = rows.map(r => _anomalyRow(r)).join('');
+
+  wrap.innerHTML = `
+    <div style="margin-top:10px;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;background:#fff">
+      <div style="padding:8px 12px;background:#f1f5f9;font-size:.78rem;font-weight:600;color:#334155;display:flex;justify-content:space-between;align-items:center">
+        <span>📋 ${monthLabel}${bu !== 'ALL' ? ' · ' + bu : ''} — ${rows.length} เครื่อง</span>
+        <span style="cursor:pointer;color:#94a3b8;font-size:1rem" onclick="this.closest('[id^=tl-expand]').innerHTML='';this.closest('[id^=tl-expand]').dataset.openKey='';document.querySelectorAll('.timeline-bar').forEach(b=>b.style.outline='')">✕</span>
+      </div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr style="background:#f8fafc">${_anomalyHead(true)}</tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function switchDashTab(name) {
+  document.querySelectorAll('.dash-subtab').forEach(b => b.classList.toggle('active', b.dataset.subtab === name));
+  document.querySelectorAll('.dash-pane').forEach(p => p.style.display = 'none');
+  const pane = document.getElementById('dash-pane-' + name);
+  if (pane) pane.style.display = '';
+}
+
+function scrollToAnomalyPanel(panelId) {
+  const el = document.getElementById(panelId);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function toggleAnomalyPanel(panelId) {
