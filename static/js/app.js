@@ -79,9 +79,11 @@ function _anomalyRow(a, opts = {}) {
   const rowBg = a.contract_status === 'expired'  ? 'background:#fff5f5'
               : a.contract_status === 'returned' ? 'background:#f8fafc'
               : !a.emp_bu_code                   ? 'background:#fffbeb' : '';
-  const userCell = a.user_name
-    ? `<strong>${esc(a.user_name)}</strong>${!a.employee_id ? ' <span style="font-size:.68rem;color:#ef4444">(ไม่พบใน HR)</span>' : ''}`
-    : '<em style="color:#cbd5e1">ไม่ระบุ</em>';
+  const userCell = a.is_central
+    ? '<span class="badge-central">🏢 ส่วนกลาง</span>'
+    : a.user_name
+      ? `<strong>${esc(a.user_name)}</strong>${!a.employee_id ? ' <span style="font-size:.68rem;color:#ef4444">(ไม่พบใน HR)</span>' : ''}`
+      : '<em style="color:#cbd5e1">ไม่ระบุ</em>';
 
   const cols = `
     <td style="padding:6px 10px;font-size:.75rem;color:#64748b;font-family:monospace;white-space:nowrap">${esc(a.asset_no)||'—'}</td>
@@ -573,6 +575,7 @@ function renderAssetTable(d) {
   const shown = assets.length;
   const totalAll = d.assets.length;   // รวมทุกเครื่องก่อน filter
   const missingEdevice = d.assets.filter(a => a.ownership_missing_edevice).length;
+  const inEdevice = totalAll - missingEdevice;
   const monthly = assets.reduce((s, a) => s + (a.monthly_charge || 0), 0);
   const sc = { expired: 0, ed_expire: 0, critical: 0, warning: 0, ok: 0 };
   d.assets.forEach(a => {   // นับจาก raw data ไม่ใช่ filtered — การ์ดแสดงยอดรวมเสมอ
@@ -582,7 +585,8 @@ function renderAssetTable(d) {
     if (isBought) return;                          // เครื่องซื้อที่ไม่ Expire ไม่นับสัญญาเช่า
     if (sc[a.contract_status] !== undefined) sc[a.contract_status]++;
   });
-  document.getElementById('a-total').textContent    = totalAll.toLocaleString();
+  document.getElementById('a-total').textContent         = totalAll.toLocaleString();
+  document.getElementById('a-total-in-edevice').textContent  = `✓ อยู่ใน eDevice ${inEdevice.toLocaleString()} เครื่อง`;
   const missingEl = document.getElementById('a-total-missing-edevice');
   if (missingEdevice > 0) {
     missingEl.textContent = `⚠ ยังไม่บันทึกใน eDevice ${missingEdevice} เครื่อง`;
@@ -689,7 +693,12 @@ function renderAssetTable(d) {
         ownershipBadge(a)
       }</td>
       <td style="${C};font-size:.8rem" title="${esc(a.model)}">${esc(a.model)}</td>
-      <td style="${C};font-size:.82rem" title="${esc(a.user_name)}"><strong>${esc(a.user_name) || '<span style="color:#94a3b8">—</span>'}</strong>${a.user_name && !a.employee_id ? ' <span style="font-size:.68rem;color:#ef4444;font-weight:600">(ไม่พบใน HR)</span>' : ''}</td>
+      <td style="${C};font-size:.82rem" title="${esc(a.user_name)}">
+        ${a.is_central
+          ? '<span class="badge-central">🏢 ส่วนกลาง</span>'
+          : `<strong>${esc(a.user_name) || '<span style="color:#94a3b8">—</span>'}</strong>${a.user_name && !a.employee_id ? ' <span style="font-size:.68rem;color:#ef4444;font-weight:600">(ไม่พบใน HR)</span>' : ''}`
+        }
+      </td>
       <td style="${C};font-size:.73rem;color:#64748b" title="${esc(a.emp_position)}">${esc(a.emp_position) || '<span style="color:#cbd5e1">—</span>'}</td>
       <td style="text-align:center">${buBadge}</td>
       <td style="${C};font-size:.75rem;color:#64748b" title="${esc(deptText)}">${esc(deptText)}</td>
@@ -755,6 +764,11 @@ async function showAssetDetail(empId, empName) {
       ['ประเภท',         esc(a.asset_type)||'—'],
       ['ประเภทสัญญา',   ownershipBadge(a)],
       ['ยี่ห้อ / รุ่น',  `${esc(a.brand)||''} ${esc(a.model)||''}`.trim() || '—'],
+      ['ผู้ถือครอง',     a.is_central
+          ? '<span class="badge-central">🏢 ส่วนกลาง</span>'
+          : a.user_name
+            ? `<strong>${esc(a.user_name)}</strong>${!a.employee_id ? ' <span style="font-size:.68rem;color:#ef4444">(ไม่พบใน HR)</span>' : ''}`
+            : '<em style="color:#94a3b8">ไม่ระบุ</em>'],
       ['แผนก',           esc(a.emp_dept)||'—'],
       ['วันเริ่มสัญญา',  _dateFmt(a.start_date)],
       ['วันหมดสัญญา',   _dateFmt(a.end_date)],
@@ -1081,9 +1095,13 @@ async function saveResolution() {
   }
 }
 
-function filterAssetStatus(status) {
+function filterAssetStatus(status, ownership) {
   document.getElementById('a-filter-status').value = status;
   assetFilters.status = status;
+  if (ownership !== undefined) {
+    document.getElementById('a-filter-ownership').value = ownership;
+    assetFilters.ownership = ownership;
+  }
   loadAssets();
   document.getElementById('tab-assets').scrollIntoView({ behavior: 'smooth' });
 }
@@ -1500,7 +1518,9 @@ async function loadRentalDashboard() {
       <td style="padding:7px 10px;font-size:.78rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(typeModel)}">${typeModel||'—'}</td>
       <td style="padding:7px 10px;white-space:nowrap">${ownershipCell}</td>
       <td style="padding:7px 10px;font-size:.82rem;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.user_name)||''}">
-        ${a.user_name ? `<strong>${esc(a.user_name)}</strong>` : '<span style="color:#94a3b8">ไม่ระบุ</span>'}
+        ${a.is_central
+          ? '<span class="badge-central">🏢 ส่วนกลาง</span>'
+          : a.user_name ? `<strong>${esc(a.user_name)}</strong>` : '<span style="color:#94a3b8">ไม่ระบุ</span>'}
       </td>
       <td style="padding:7px 10px;white-space:nowrap"><span class="bu-badge bu-${esc(a.emp_bu_code)}">${esc(a.emp_bu_code)||'—'}</span></td>
       <td style="padding:7px 10px;font-size:.78rem;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.emp_dept)||''}">${esc(a.emp_dept)||'—'}</td>
@@ -1518,6 +1538,7 @@ async function loadRentalDashboard() {
 
   // ---- Anomaly panel 1: ไม่มีข้อมูลสัญญา ----
   const nc = d.no_contract || [];
+  document.getElementById('r-unknown').textContent = nc.length.toLocaleString();
   document.getElementById('r-no-contract-head').innerHTML = _anomalyHead(true);
   document.getElementById('r-no-contract-count').textContent =
     nc.length ? `${nc.length} เครื่อง ⚠️` : '0 เครื่อง ✓';
@@ -1531,6 +1552,7 @@ async function loadRentalDashboard() {
   const nbNoDept  = nb.filter(a => !a.has_dept).length;
   const nbHasUser = nb.filter(a => a.user_name).length;
 
+  document.getElementById('r-no-bu-badge').textContent = nb.length.toLocaleString();
   document.getElementById('r-no-bu-head').innerHTML = _anomalyHead(true);
   document.getElementById('r-no-bu-count').textContent =
     nb.length ? `${nb.length} เครื่อง ⚠️` : '0 เครื่อง ✓';

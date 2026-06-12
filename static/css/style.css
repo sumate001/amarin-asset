@@ -318,6 +318,7 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .pill-unknown  { background: #f1f5f9; color: #64748b; }
 .pill-bought   { background: #ede9fe; color: #6d28d9; }
 .pill-rented   { background: #fef3c7; color: #b45309; }
+.badge-central { display:inline-block; background:#e0f2fe; color:#0369a1; font-size:.75rem; font-weight:700; padding:2px 9px; border-radius:6px; white-space:nowrap; }
 
 .days-chip {
   font-size: .8rem; font-weight: 700; padding: 2px 8px;

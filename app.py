@@ -471,6 +471,17 @@ def fetch_assets_raw(force=False):
             # BU จาก eDevice (ทรัพย์สิน BU) — ใช้เป็น fallback เมื่อ HR lookup ไม่เจอ
             ed_bu_code = (a_ed.get('bu_code') or '').strip()
             ed_bu      = ''   # ชื่อเต็มไม่จำเป็น
+            # ── ส่วนกลาง detection ───────────────────────────────────
+            # 1) central_type จาก radio button (หลัง re-sync)
+            # 2) fallback: eDevice มีข้อมูลแต่ไม่มีชื่อพนักงานและรหัสพนักงาน → ส่วนกลาง
+            _central_type = (a_ed.get('central_type') or '').strip()
+            is_central = (
+                _central_type == 'ส่วนกลาง'
+                or (not _central_type and not ed_emp_name and not ed_emp_code)
+            )
+            if is_central:
+                user_name = 'ส่วนกลาง'
+                emp = None   # ไม่มีพนักงานเป็นเจ้าของ
         else:
             # Sheets-only: ไม่มีข้อมูล eDevice
             emp        = match_employee(sh.get('ชื่อ-สกุล', '') if sh else '')
@@ -484,6 +495,7 @@ def fetch_assets_raw(force=False):
             ed_status  = ''
             ed_bu_code = ''
             ed_bu      = ''
+            is_central = False
 
         # ── Ownership fallback + flag ─────────────────────────────────
         # ownership_needs_update: eDevice มีข้อมูลแต่ไม่ได้ระบุ เช่า/ซื้อ → ควรไปแก้ใน eDevice
@@ -548,6 +560,7 @@ def fetch_assets_raw(force=False):
             'edevice_matched':          bool(a_ed),
             'ownership_needs_update':   ownership_needs_update,     # มีใน eDevice แต่ไม่ระบุ เช่า/ซื้อ
             'ownership_missing_edevice':ownership_missing_edevice,  # ไม่มีใน eDevice เลย
+            'is_central':      is_central,     # เครื่องที่เป็น "ส่วนกลาง" ใน eDevice
             'employee_id':     emp['id']   if emp else None,
             'emp_bu':          final_bu,
             'emp_bu_code':     final_bu_code,
@@ -828,10 +841,14 @@ def dashboard_rental():
     )
     by_status['ed_expire'] = ed_expire_count
     # สถานะสัญญาเช่า (ไม่นับเครื่องที่ eDevice = Expire แล้ว)
+    # unknown: ยกเว้น ownership_needs_update เพราะอยู่ใน panel "ยังไม่ระบุ เช่า/ซื้อ" แทน
     for r in rentals:
         if (r.get('edevice_status') or '').lower() == 'expire':
             continue   # นับใน ed_expire แล้ว
-        by_status[r['contract_status']] += 1
+        cs = r['contract_status']
+        if cs == 'unknown' and r.get('ownership_needs_update'):
+            continue   # ไม่นับใน card ไม่มีข้อมูลสัญญา
+        by_status[cs] += 1
 
     total_monthly = sum(r['monthly_charge'] for r in rentals)
 
@@ -846,7 +863,7 @@ def dashboard_rental():
         key=lambda x: -x['count']
     )
 
-    # แยกแผนก (top 15)
+    # แผนกทั้งหมด เรียงตามจำนวนเครื่อง
     dept_map = defaultdict(int)
     for r in rentals:
         dept = r['emp_dept'] or r['dept_sheet'] or '—'
@@ -854,7 +871,7 @@ def dashboard_rental():
     by_dept = sorted(
         [{'dept': k, 'count': v} for k, v in dept_map.items()],
         key=lambda x: -x['count']
-    )[:15]
+    )
 
     # timeline: สัญญาหมดรายเดือน แยก BU
     # timeline_by_bu = { bu_code: { ym: count } }
@@ -940,6 +957,7 @@ def dashboard_rental():
             'edevice_matched': r.get('edevice_matched', False),
             'ownership_needs_update':    r.get('ownership_needs_update', False),
             'ownership_missing_edevice': r.get('ownership_missing_edevice', False),
+            'is_central':                r.get('is_central', False),
         }
 
     # no_contract = เช่าที่ไม่มีข้อมูลสัญญา แต่ยกเว้น ownership_needs_update
@@ -989,6 +1007,7 @@ def dashboard_rental():
             'edevice_matched': r.get('edevice_matched', False),
             'ownership_needs_update':    r.get('ownership_needs_update', False),
             'ownership_missing_edevice': r.get('ownership_missing_edevice', False),
+            'is_central':                r.get('is_central', False),
         })
         rental_index[f'{ym}|ALL'].append(rental_index[f'{ym}|{bu}'][-1])
 
@@ -1250,12 +1269,31 @@ def _parse_computer_detail(text, cid):
         'ประเภท*:':               'device_type',
         'วันที่รับสินค้า*:':     'received_date',
         'ราคาเช่าต่อเดือน:':    'monthly_rent',
-        'ทรัพย์สินของ*:':        'asset_type',
     }
     data = {'computer_id': cid}
     data.update(_parse_label_value(soup, label_map))
     data['bu_code'] = bu_th_to_code(data.get('bu_th', ''))
     _clean_serial(data)
+    # ── Radio button: ทรัพย์สินของ*: (ส่วนบุคคล / ส่วนกลาง) ─────────
+    for row in soup.find_all('tr'):
+        tds = row.find_all('td')
+        for i in range(len(tds) - 1):
+            lbl = tds[i].get_text(strip=True).replace('\xa0', ' ')
+            if 'ทรัพย์สินของ' in lbl:
+                val_td = tds[i + 1]
+                for radio in val_td.find_all('input', {'type': 'radio'}):
+                    if radio.has_attr('checked'):
+                        sibling = radio.next_sibling
+                        if sibling:
+                            t = str(sibling).strip()
+                            if t:
+                                data['central_type'] = t
+                                break
+                        v = radio.get('value', '').strip()
+                        if v:
+                            data['central_type'] = v
+                            break
+                break
     return data
 
 
@@ -1368,6 +1406,26 @@ def _parse_mac_detail(text, cid):
 
     data['bu_code'] = bu_th_to_code(data.get('bu_th', ''))
     _clean_serial(data)
+    # ── Radio button: ทรัพย์สินของ*: (ส่วนบุคคล / ส่วนกลาง) ─────────
+    for row in soup.find_all('tr'):
+        tds = row.find_all('td')
+        for i in range(len(tds) - 1):
+            lbl = tds[i].get_text(strip=True).replace('\xa0', ' ')
+            if 'ทรัพย์สินของ' in lbl:
+                val_td = tds[i + 1]
+                for radio in val_td.find_all('input', {'type': 'radio'}):
+                    if radio.has_attr('checked'):
+                        sibling = radio.next_sibling
+                        if sibling:
+                            t = str(sibling).strip()
+                            if t:
+                                data['central_type'] = t
+                                break
+                        v = radio.get('value', '').strip()
+                        if v:
+                            data['central_type'] = v
+                            break
+                break
     return data
 
 

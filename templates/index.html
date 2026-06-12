@@ -113,13 +113,14 @@
     <div class="stat-card">
       <div class="stat-label">เครื่องทั้งหมด</div>
       <div class="stat-value" id="a-total">—</div>
+      <div class="stat-sub" id="a-total-in-edevice" style="font-size:.72rem;margin-top:4px;color:#16a34a;font-weight:600"></div>
       <div class="stat-sub" id="a-total-missing-edevice" style="display:none"></div>
     </div>
     <div class="stat-card">
       <div class="stat-label">ค่าเช่า/เดือน (฿)</div>
       <div class="stat-value" id="a-monthly">—</div>
     </div>
-    <div class="stat-card clickable" onclick="filterAssetStatus('expired')">
+    <div class="stat-card clickable" onclick="filterAssetStatus('expired','เช่า')">
       <div class="stat-label">🔴 หมดสัญญาเช่า</div>
       <div class="stat-value red" id="a-expired">—</div>
       <div class="stat-sub" style="color:#dc2626">วันหมดสัญญาผ่านแล้ว</div>
@@ -129,15 +130,15 @@
       <div class="stat-value" style="color:#b45309" id="a-ed-expire">—</div>
       <div class="stat-sub" style="color:#92400e">eDevice ระบุ Expire</div>
     </div>
-    <div class="stat-card clickable" onclick="filterAssetStatus('critical')">
+    <div class="stat-card clickable" onclick="filterAssetStatus('critical','เช่า')">
       <div class="stat-label">🟠 หมดใน 90 วัน</div>
       <div class="stat-value orange" id="a-critical">—</div>
     </div>
-    <div class="stat-card clickable" onclick="filterAssetStatus('warning')">
+    <div class="stat-card clickable" onclick="filterAssetStatus('warning','เช่า')">
       <div class="stat-label">🟡 หมดใน 180 วัน</div>
       <div class="stat-value yellow" id="a-warning">—</div>
     </div>
-    <div class="stat-card clickable" onclick="filterAssetStatus('ok')">
+    <div class="stat-card clickable" onclick="filterAssetStatus('ok','เช่า')">
       <div class="stat-label">🟢 อยู่ในระยะเวลาสัญญาเช่า</div>
       <div class="stat-value green" id="a-ok">—</div>
     </div>
@@ -547,7 +548,7 @@
         <div id="r-bu-bars"></div>
       </div>
       <div class="dash-panel">
-        <h3>Top 15 แผนกที่มีเครื่องเช่า</h3>
+        <h3>แผนกที่มีเครื่องเช่า (ทุกแผนก)</h3>
         <div id="r-dept-bars"></div>
       </div>
     </div>
