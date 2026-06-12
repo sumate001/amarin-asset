@@ -848,6 +848,8 @@ def dashboard_rental():
         cs = r['contract_status']
         if cs == 'unknown' and r.get('ownership_needs_update'):
             continue   # ไม่นับใน card ไม่มีข้อมูลสัญญา
+        if cs == 'unknown' and r.get('is_central'):
+            continue   # ส่วนกลาง = stock ปกติ ไม่นับเป็น anomaly
         by_status[cs] += 1
 
     total_monthly = sum(r['monthly_charge'] for r in rentals)
@@ -964,7 +966,8 @@ def dashboard_rental():
     # (กลุ่มนั้นมีปัญหา ownership ก่อน ควรแก้ใน eDevice ก่อน → อยู่ใน panel needs_update แทน)
     no_contract = [_mini(r) for r in rentals
                    if r['contract_status'] == 'unknown'
-                   and not r.get('ownership_needs_update')]
+                   and not r.get('ownership_needs_update')
+                   and not r.get('is_central')]   # ส่วนกลาง = stock ไม่มีสัญญาเป็นเรื่องปกติ
     no_contract.sort(key=lambda x: (x['emp_bu_code'] or '่', x['emp_dept'] or '่'))
 
     # ---- anomaly: เครื่องเช่าที่ไม่มี BU (จากทั้ง HR + eDevice) ----

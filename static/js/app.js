@@ -567,8 +567,8 @@ function renderAssetTable(d) {
     (a.edevice_status || '').toLowerCase() === 'return' ||
     a.contract_status === 'returned'
   );
-  if (onlyResigned)        assets = assets.filter(a => a.user_name && !a.employee_id);
-  if (onlyNoOwner)         assets = assets.filter(a => !a.user_name);
+  if (onlyResigned)        assets = assets.filter(a => a.user_name && !a.employee_id && !a.is_central);
+  if (onlyNoOwner)         assets = assets.filter(a => !a.user_name && !a.is_central);
   if (onlyCentral)         assets = assets.filter(a => a.is_central);
   if (onlyMissingEdevice)  assets = assets.filter(a => a.ownership_missing_edevice);
 
@@ -1387,7 +1387,7 @@ async function loadRentalDashboard() {
       return `<tr style="border-bottom:1px solid #f1f5f9;font-size:.78rem">
         <td style="padding:5px 8px"><code style="font-size:.72rem;color:#334155">${esc(r.computer_id)||'—'}</code></td>
         <td style="padding:5px 8px">${esc(r.asset_type)} ${esc(r.model)}</td>
-        <td style="padding:5px 8px"><strong>${esc(r.user_name)||'—'}</strong></td>
+        <td style="padding:5px 8px">${r.is_central ? '<span class="badge-central">🏢 ส่วนกลาง</span>' : `<strong>${esc(r.user_name)||'—'}</strong>${r.user_name && !r.employee_id ? ' <span style="font-size:.65rem;color:#ef4444">(ไม่พบใน HR)</span>' : ''}`}</td>
         <td style="padding:5px 8px;color:#64748b;font-size:.75rem">${esc(r.emp_dept)||'—'}</td>
         <td style="padding:5px 8px;white-space:nowrap">${endFmt}</td>
         <td style="padding:5px 8px;white-space:nowrap;color:${csColor[r.contract_status]||'#64748b'};font-weight:600;font-size:.75rem">${dStr}</td>
@@ -1570,7 +1570,7 @@ async function loadRentalDashboard() {
   const nb = d.no_bu || [];
   const nbHasDept = nb.filter(a => a.has_dept).length;
   const nbNoDept  = nb.filter(a => !a.has_dept).length;
-  const nbHasUser = nb.filter(a => a.user_name).length;
+  const nbHasUser = nb.filter(a => a.user_name && !a.is_central && !a.employee_id).length;
 
   document.getElementById('r-no-bu-badge').textContent = nb.length.toLocaleString();
   document.getElementById('r-no-bu-head').innerHTML = _anomalyHead(true);
