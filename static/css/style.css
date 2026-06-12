@@ -67,6 +67,20 @@ header p { font-size: .75rem; opacity: .7; margin-top: 2px; }
 }
 .toolbar-left, .toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
+.btn-reset-filter {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 12px; border-radius: 6px; border: 1.5px solid #fca5a5;
+  background: #fff1f2; color: #dc2626; font-size: .78rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap; transition: background .15s, border-color .15s;
+}
+.btn-reset-filter:hover { background: #fee2e2; border-color: #f87171; }
+
+.ri-filter-tag {
+  cursor: pointer;
+  transition: background .15s, opacity .15s;
+}
+.ri-filter-tag:hover { opacity: .75; }
+
 .search-wrap {
   position: relative; display: flex; align-items: center;
 }

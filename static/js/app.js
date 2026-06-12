@@ -550,6 +550,7 @@ async function loadAssets(refresh = false) {
   }
 
   _assetRawData = d;
+  window._lastAssetData = d;
   renderAssetTable(d);
 }
 
@@ -597,27 +598,46 @@ function renderAssetTable(d) {
   document.getElementById('a-critical').textContent  = sc.critical.toLocaleString();
   document.getElementById('a-warning').textContent   = sc.warning.toLocaleString();
   document.getElementById('a-ok').textContent        = sc.ok.toLocaleString();
-  const filterTags = [];
-  if (edStatusF)           filterTags.push(`eDevice: ${edStatusF}`);
-  if (onlyResigned)        filterTags.push(`เฉพาะไม่พบใน HR`);
-  if (onlyNoOwner)         filterTags.push(`ไม่มีผู้ถือครอง`);
-  if (onlyCentral)         filterTags.push(`🏢 ส่วนกลาง`);
-  if (onlyMissingEdevice)  filterTags.push(`ยังไม่บันทึกใน eDevice`);
+  // ── filter tags พร้อม config สำหรับ clear แต่ละตัว ──────────────────
+  const filterTagCfg = [];
+  if (assetFilters.q)        filterTagCfg.push({ label: `🔍 "${assetFilters.q}"`,   clear: () => { document.getElementById('a-search').value=''; assetFilters.q=''; } });
+  if (assetFilters.bu)       filterTagCfg.push({ label: `BU: ${assetFilters.bu}`,    clear: () => { document.getElementById('a-filter-bu').value=''; assetFilters.bu=''; } });
+  if (assetFilters.type)     filterTagCfg.push({ label: `ประเภท: ${assetFilters.type}`, clear: () => { document.getElementById('a-filter-type').value=''; assetFilters.type=''; } });
+  if (assetFilters.ownership)filterTagCfg.push({ label: `สัญญา: ${assetFilters.ownership}`, clear: () => { document.getElementById('a-filter-ownership').value=''; assetFilters.ownership=''; } });
+  if (assetFilters.status)   filterTagCfg.push({ label: `สถานะ: ${assetFilters.status}`, clear: () => { document.getElementById('a-filter-status').value=''; assetFilters.status=''; } });
+  if (edStatusF)             filterTagCfg.push({ label: `eDevice: ${edStatusF}`,    clear: () => { document.getElementById('a-filter-ed-status').value=''; } });
+  if (assetFilters.position) filterTagCfg.push({ label: `ตำแหน่ง: ${assetFilters.position}`, clear: () => { document.getElementById('a-filter-position').value=''; assetFilters.position=''; } });
+  if (assetFilters.dept)     filterTagCfg.push({ label: `แผนก: ${assetFilters.dept}`, clear: () => { document.getElementById('a-filter-dept').value=''; assetFilters.dept=''; } });
+  if (onlyResigned)          filterTagCfg.push({ label: `⚠ ไม่พบใน HR`,  clear: () => { document.getElementById('a-filter-resigned').checked=false; } });
+  if (onlyNoOwner)           filterTagCfg.push({ label: `❔ ไม่มีผู้ถือครอง`, clear: () => { document.getElementById('a-filter-no-owner').checked=false; } });
+  if (onlyCentral)           filterTagCfg.push({ label: `🏢 ส่วนกลาง`,   clear: () => { document.getElementById('a-filter-central').checked=false; } });
+  if (onlyMissingEdevice)    filterTagCfg.push({ label: `✕ ยังไม่บันทึกใน eDevice`, clear: () => { document.getElementById('a-filter-missing-edevice').checked=false; } });
 
-  const isFiltered = shown < totalAll || filterTags.length > 0;
+  const isFiltered = shown < totalAll || filterTagCfg.length > 0;
+
+  // แสดง/ซ่อนปุ่ม reset
+  const resetBtn = document.getElementById('a-reset-btn');
+  const resetDiv = document.getElementById('a-reset-divider');
+  if (resetBtn) resetBtn.style.display = isFiltered ? '' : 'none';
+  if (resetDiv) resetDiv.style.display = isFiltered ? '' : 'none';
+
   const countHtml = isFiltered
     ? `<span class="ri-count">${shown.toLocaleString()}</span><span style="color:#94a3b8;font-size:.82rem"> / ${totalAll.toLocaleString()} รายการ</span>`
     : `<span class="ri-count">${shown.toLocaleString()}</span><span style="color:#94a3b8;font-size:.82rem"> รายการ</span>`;
 
   const monthlyHtml = `<span class="ri-monthly">฿${monthly.toLocaleString('th', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</span><span style="color:#64748b;font-size:.78rem"> / เดือน</span>`;
 
-  const tagsHtml = filterTags.map(t =>
-    `<span class="ri-filter-tag">✦ ${t}</span>`
+  // tags กด × ได้ทีละอัน — store clear fn บน window แล้วเรียก by index
+  window._filterClearFns = filterTagCfg.map(f => f.clear);
+  const tagsHtml = filterTagCfg.map((f, i) =>
+    `<span class="ri-filter-tag" onclick="window._filterClearFns[${i}]();renderAssetTable(window._lastAssetData)" title="คลิกเพื่อยกเลิก filter นี้">
+      ${f.label} <span style="margin-left:3px;font-size:.7rem;opacity:.7">×</span>
+    </span>`
   ).join('');
 
   const riEl = document.getElementById('a-result-info');
-  riEl.innerHTML = `${countHtml} &nbsp;·&nbsp; ${monthlyHtml}${tagsHtml ? ' &nbsp;' + tagsHtml : ''}`;
-  if (filterTags.length > 0 || isFiltered) {
+  riEl.innerHTML = `${countHtml} &nbsp;·&nbsp; ${monthlyHtml}${tagsHtml ? ' &nbsp;&nbsp;' + tagsHtml : ''}`;
+  if (isFiltered) {
     riEl.style.background = '#eff6ff';
     riEl.style.borderBottom = '1px solid #bfdbfe';
     riEl.style.borderTop = '2px solid #3b82f6';
@@ -1107,6 +1127,24 @@ async function saveResolution() {
   } catch(e) {
     showToast('บันทึกไม่สำเร็จ', 'error');
   }
+}
+
+function resetAssetFilters() {
+  // ล้าง dropdowns
+  ['a-search','a-filter-bu','a-filter-type','a-filter-ownership',
+   'a-filter-status','a-filter-ed-status','a-filter-position','a-filter-dept'
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  // ล้าง checkboxes
+  ['a-filter-resigned','a-filter-no-owner','a-filter-central','a-filter-missing-edevice'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.checked = false;
+  });
+  // reset state
+  assetFilters = { q: '', type: '', bu: '', status: '', ownership: '', position: '', dept: '' };
+  loadAssets();
 }
 
 function filterAssetStatus(status, ownership) {
