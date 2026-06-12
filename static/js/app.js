@@ -574,10 +574,13 @@ function renderAssetTable(d) {
   const totalAll = d.assets.length;   // รวมทุกเครื่องก่อน filter
   const missingEdevice = d.assets.filter(a => a.ownership_missing_edevice).length;
   const monthly = assets.reduce((s, a) => s + (a.monthly_charge || 0), 0);
-  const sc = { expired: 0, critical: 0, warning: 0, ok: 0 };
-  assets.forEach(a => {
-    const isBought = a.ownership === 'ซื้อ';
-    if (!isBought && sc[a.contract_status] !== undefined) sc[a.contract_status]++;
+  const sc = { expired: 0, ed_expire: 0, critical: 0, warning: 0, ok: 0 };
+  d.assets.forEach(a => {   // นับจาก raw data ไม่ใช่ filtered — การ์ดแสดงยอดรวมเสมอ
+    const isBought   = a.ownership === 'ซื้อ';
+    const isEdExpire = (a.edevice_status || '').toLowerCase() === 'expire';
+    if (isEdExpire) { sc.ed_expire++; return; }   // ทุกเครื่อง (ซื้อ+เช่า) ที่ eDevice = Expire
+    if (isBought) return;                          // เครื่องซื้อที่ไม่ Expire ไม่นับสัญญาเช่า
+    if (sc[a.contract_status] !== undefined) sc[a.contract_status]++;
   });
   document.getElementById('a-total').textContent    = totalAll.toLocaleString();
   const missingEl = document.getElementById('a-total-missing-edevice');
@@ -587,11 +590,12 @@ function renderAssetTable(d) {
   } else {
     missingEl.style.display = 'none';
   }
-  document.getElementById('a-monthly').textContent  = '฿' + monthly.toLocaleString('th', {minimumFractionDigits: 0, maximumFractionDigits: 0});
-  document.getElementById('a-expired').textContent  = sc.expired.toLocaleString();
-  document.getElementById('a-critical').textContent = sc.critical.toLocaleString();
-  document.getElementById('a-warning').textContent  = sc.warning.toLocaleString();
-  document.getElementById('a-ok').textContent       = sc.ok.toLocaleString();
+  document.getElementById('a-monthly').textContent   = '฿' + monthly.toLocaleString('th', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+  document.getElementById('a-expired').textContent   = sc.expired.toLocaleString();
+  document.getElementById('a-ed-expire').textContent = sc.ed_expire.toLocaleString();
+  document.getElementById('a-critical').textContent  = sc.critical.toLocaleString();
+  document.getElementById('a-warning').textContent   = sc.warning.toLocaleString();
+  document.getElementById('a-ok').textContent        = sc.ok.toLocaleString();
   const notes = [];
   if (edStatusF)           notes.push(`eDevice: ${edStatusF}`);
   if (onlyReturn)          notes.push(`เฉพาะเครื่อง Return ${shown} เครื่อง`);
@@ -1081,7 +1085,16 @@ function filterAssetStatus(status) {
   document.getElementById('a-filter-status').value = status;
   assetFilters.status = status;
   loadAssets();
-  // scroll to table
+  document.getElementById('tab-assets').scrollIntoView({ behavior: 'smooth' });
+}
+
+function filterAssetEdExpire() {
+  // filter เครื่องเช่าที่ eDevice = Expire
+  const edEl = document.getElementById('a-filter-ed-status');
+  if (edEl) edEl.value = 'expire';
+  document.getElementById('a-filter-ownership').value = 'เช่า';
+  assetFilters.ownership = 'เช่า';
+  loadAssets();
   document.getElementById('tab-assets').scrollIntoView({ behavior: 'smooth' });
 }
 
@@ -1263,7 +1276,8 @@ async function loadRentalDashboard() {
   document.getElementById('r-total').textContent   = d.total_rental.toLocaleString();
   document.getElementById('r-monthly').textContent = '฿' + (d.total_monthly||0).toLocaleString('th', {maximumFractionDigits:0});
   const sc = d.by_status || {};
-  document.getElementById('r-expired').textContent  = (sc.expired  || 0).toLocaleString();
+  document.getElementById('r-expired').textContent   = (sc.expired   || 0).toLocaleString();
+  document.getElementById('r-ed-expire').textContent = (sc.ed_expire || 0).toLocaleString();
   document.getElementById('r-critical').textContent = (sc.critical || 0).toLocaleString();
   document.getElementById('r-warning').textContent  = (sc.warning  || 0).toLocaleString();
   document.getElementById('r-ok').textContent       = (sc.ok       || 0).toLocaleString();
@@ -1616,7 +1630,7 @@ function toggleAnomalyPanel(panelId) {
   el.style.display = el.style.display === 'none' ? '' : 'none';
 }
 
-function switchToAssets(status, ownership) {
+function switchToAssets(status, ownership, edStatus) {
   // สลับไปแท็บ IT Assets แล้ว filter ตามที่กด
   document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
   document.querySelector('.tab[data-tab="assets"]').classList.add('active');
@@ -1624,9 +1638,11 @@ function switchToAssets(status, ownership) {
   document.getElementById('tab-assets').style.display = '';
   if (!assetLoaded) { loadAssetMeta(); assetLoaded = true; }
 
-  document.getElementById('a-filter-status').value     = status || '';
+  document.getElementById('a-filter-status').value     = status    || '';
   document.getElementById('a-filter-ownership').value  = ownership || '';
-  assetFilters.status    = status || '';
+  const edEl = document.getElementById('a-filter-ed-status');
+  if (edEl) edEl.value = edStatus || '';
+  assetFilters.status    = status    || '';
   assetFilters.ownership = ownership || '';
   loadAssets();
 }

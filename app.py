@@ -818,9 +818,19 @@ def dashboard_rental():
 
     today = date.today()
 
-    # summary
+    # summary — นับจาก all_assets (raw) เพื่อให้ card แสดงยอดรวมจริง
     by_status = defaultdict(int)
+    # ed_expire: ทุกเครื่อง (ซื้อ+เช่า) ที่ eDevice = Expire
+    ed_expire_count = sum(
+        1 for r in data
+        if (r.get('edevice_status') or '').lower() == 'expire'
+        and r['contract_status'] != 'returned'
+    )
+    by_status['ed_expire'] = ed_expire_count
+    # สถานะสัญญาเช่า (ไม่นับเครื่องที่ eDevice = Expire แล้ว)
     for r in rentals:
+        if (r.get('edevice_status') or '').lower() == 'expire':
+            continue   # นับใน ed_expire แล้ว
         by_status[r['contract_status']] += 1
 
     total_monthly = sum(r['monthly_charge'] for r in rentals)

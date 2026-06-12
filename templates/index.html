@@ -120,8 +120,14 @@
       <div class="stat-value" id="a-monthly">—</div>
     </div>
     <div class="stat-card clickable" onclick="filterAssetStatus('expired')">
-      <div class="stat-label">🔴 หมดสัญญาแล้ว</div>
+      <div class="stat-label">🔴 หมดสัญญาเช่า</div>
       <div class="stat-value red" id="a-expired">—</div>
+      <div class="stat-sub" style="color:#dc2626">วันหมดสัญญาผ่านแล้ว</div>
+    </div>
+    <div class="stat-card clickable" onclick="filterAssetEdExpire()">
+      <div class="stat-label">⚠️ eDevice Expire</div>
+      <div class="stat-value" style="color:#b45309" id="a-ed-expire">—</div>
+      <div class="stat-sub" style="color:#92400e">eDevice ระบุ Expire</div>
     </div>
     <div class="stat-card clickable" onclick="filterAssetStatus('critical')">
       <div class="stat-label">🟠 หมดใน 90 วัน</div>
@@ -501,7 +507,7 @@
   <!-- ========== Tab 2: บริหารสัญญาเช่า ========== -->
   <div id="dash-pane-rental" class="dash-pane" style="display:none">
     <!-- Summary cards -->
-    <div class="dash-grid" style="grid-template-columns:repeat(6,1fr)">
+    <div class="dash-grid" style="grid-template-columns:repeat(7,1fr)">
       <div class="stat-card">
         <div class="stat-label">เครื่องเช่าทั้งหมด</div>
         <div class="stat-value" id="r-total">—</div>
@@ -510,9 +516,15 @@
         <div class="stat-label">ค่าเช่า/เดือน (฿)</div>
         <div class="stat-value" id="r-monthly">—</div>
       </div>
-      <div class="stat-card clickable" onclick="switchToAssets('expired','เช่า')">
-        <div class="stat-label">🔴 หมดสัญญาแล้ว</div>
+      <div class="stat-card clickable" onclick="switchToAssets('expired','เช่า','')">
+        <div class="stat-label">🔴 หมดสัญญาเช่า</div>
         <div class="stat-value red" id="r-expired">—</div>
+        <div class="stat-sub" style="color:#dc2626">วันหมดสัญญาผ่านไปแล้ว</div>
+      </div>
+      <div class="stat-card clickable" onclick="switchToAssets('','เช่า','expire')">
+        <div class="stat-label">⚠️ eDevice Expire</div>
+        <div class="stat-value" style="color:#b45309" id="r-ed-expire">—</div>
+        <div class="stat-sub" style="color:#92400e">eDevice ระบุ Expire</div>
       </div>
       <div class="stat-card clickable" onclick="switchToAssets('critical','เช่า')">
         <div class="stat-label">🟠 หมดใน 90 วัน</div>

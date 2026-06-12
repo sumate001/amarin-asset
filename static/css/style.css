@@ -289,11 +289,12 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 /* ---- IT Assets ---- */
 .asset-summary {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 12px;
   padding: 16px 24px 0;
 }
-@media (max-width: 900px) { .asset-summary { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1200px) { .asset-summary { grid-template-columns: repeat(4, 1fr); } }
+@media (max-width: 900px)  { .asset-summary { grid-template-columns: repeat(3, 1fr); } }
 
 .stat-card.clickable { cursor: pointer; transition: box-shadow .15s, transform .1s; }
 .stat-card.clickable:hover { box-shadow: 0 4px 16px rgba(0,0,0,.12); transform: translateY(-1px); }
