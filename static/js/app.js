@@ -487,7 +487,7 @@ async function loadAssetMeta() {
   });
 
   // checkbox / dropdown ที่ filter ฝั่ง client — toggle ทันทีโดยไม่ fetch ใหม่
-  ['a-filter-return', 'a-filter-resigned', 'a-filter-no-owner', 'a-filter-missing-edevice'].forEach(id => {
+  ['a-filter-return', 'a-filter-resigned', 'a-filter-no-owner', 'a-filter-central', 'a-filter-missing-edevice'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => {
       if (_assetRawData) renderAssetTable(_assetRawData);
     });
@@ -557,6 +557,7 @@ function renderAssetTable(d) {
   const onlyReturn    = document.getElementById('a-filter-return')?.checked ?? false;
   const onlyResigned  = document.getElementById('a-filter-resigned')?.checked ?? false;
   const onlyNoOwner        = document.getElementById('a-filter-no-owner')?.checked ?? false;
+  const onlyCentral        = document.getElementById('a-filter-central')?.checked ?? false;
   const onlyMissingEdevice = document.getElementById('a-filter-missing-edevice')?.checked ?? false;
   const edStatusF     = (document.getElementById('a-filter-ed-status')?.value || '').toLowerCase();
 
@@ -568,6 +569,7 @@ function renderAssetTable(d) {
   );
   if (onlyResigned)        assets = assets.filter(a => a.user_name && !a.employee_id);
   if (onlyNoOwner)         assets = assets.filter(a => !a.user_name);
+  if (onlyCentral)         assets = assets.filter(a => a.is_central);
   if (onlyMissingEdevice)  assets = assets.filter(a => a.ownership_missing_edevice);
 
   // ── อัพเดท summary cards ──────────────────────────────────────────
@@ -605,6 +607,7 @@ function renderAssetTable(d) {
   if (onlyReturn)          notes.push(`เฉพาะเครื่อง Return ${shown} เครื่อง`);
   if (onlyResigned)        notes.push(`เฉพาะลาออก ${shown} เครื่อง`);
   if (onlyNoOwner)         notes.push(`ไม่มีผู้ถือครอง ${shown} เครื่อง`);
+  if (onlyCentral)         notes.push(`เฉพาะส่วนกลาง ${shown} เครื่อง`);
   if (onlyMissingEdevice)  notes.push(`ยังไม่บันทึกใน eDevice ${shown} เครื่อง`);
   const hiddenNote = notes.length ? ` · ${notes.join(' · ')}` : '';
   const shownLabel = shown < totalAll
