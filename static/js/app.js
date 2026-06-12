@@ -605,7 +605,7 @@ function renderAssetTable(d) {
   const filterTags = [];
   if (edStatusF)           filterTags.push(`eDevice: ${edStatusF}`);
   if (onlyReturn)          filterTags.push(`เครื่อง Return`);
-  if (onlyResigned)        filterTags.push(`เฉพาะลาออก`);
+  if (onlyResigned)        filterTags.push(`เฉพาะไม่พบใน HR`);
   if (onlyNoOwner)         filterTags.push(`ไม่มีผู้ถือครอง`);
   if (onlyCentral)         filterTags.push(`🏢 ส่วนกลาง`);
   if (onlyMissingEdevice)  filterTags.push(`ยังไม่บันทึกใน eDevice`);
