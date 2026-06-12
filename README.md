@@ -2,7 +2,7 @@
 
 ระบบบริหารข้อมูลพนักงานและทรัพย์สิน IT สำหรับกลุ่มบริษัทอมรินทร์
 
-> **Version 1.3.1** · Python Flask + SQLite + Vanilla JS
+> **Version 1.3.2** · Python Flask + SQLite + Vanilla JS
 
 ---
 
@@ -23,6 +23,7 @@
 - Export Excel
 - โอนทรัพย์สินระหว่างพนักงาน / คืน Stock เมื่อพนักงานออก
 - Popup ทรัพย์สิน IT: แสดงรายละเอียดครบในรูปแบบ card พร้อมสีกรอบตามสถานะ
+- ตรวจจับเครื่อง **"ส่วนกลาง"** จาก eDevice — แสดง badge สีฟ้าแทนชื่อพนักงาน
 
 ### 📊 Dashboard
 แบ่งเป็น 3 แท็บ:
@@ -184,6 +185,7 @@ fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
 | ⚪ `unknown` | ไม่มี end_date | เครื่องที่ไม่อยู่ในสัญญา Sheets |
 | 🗑 ตัดจำหน่าย | เครื่องซื้อ + eDevice = Expire | แสดงในคอลัม สถานะสัญญา |
 | ↩ คืนแล้ว | eDevice = Return หรือ Sheets Returned | |
+| 🏢 ส่วนกลาง | eDevice ระบุ "ทรัพย์สินของ: ส่วนกลาง" | แสดง badge สีฟ้าในคอลัมน์ผู้ถือครอง |
 
 ---
 
