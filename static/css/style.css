@@ -96,8 +96,37 @@ select:focus { border-color: #2563eb; }
 
 /* ---- Result info ---- */
 .result-info {
-  padding: 8px 24px; font-size: .78rem; color: #64748b; background: #f8fafc;
+  padding: 10px 24px;
+  font-size: .82rem;
+  color: #64748b;
+  background: #f8fafc;
   border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.result-info .ri-count {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+.result-info .ri-monthly {
+  font-size: .9rem;
+  font-weight: 700;
+  color: #0f766e;
+}
+.result-info .ri-filter-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: .75rem;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 20px;
+  border: 1px solid #bfdbfe;
 }
 
 /* ---- Table ---- */

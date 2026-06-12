@@ -602,19 +602,27 @@ function renderAssetTable(d) {
   document.getElementById('a-critical').textContent  = sc.critical.toLocaleString();
   document.getElementById('a-warning').textContent   = sc.warning.toLocaleString();
   document.getElementById('a-ok').textContent        = sc.ok.toLocaleString();
-  const notes = [];
-  if (edStatusF)           notes.push(`eDevice: ${edStatusF}`);
-  if (onlyReturn)          notes.push(`เฉพาะเครื่อง Return ${shown} เครื่อง`);
-  if (onlyResigned)        notes.push(`เฉพาะลาออก ${shown} เครื่อง`);
-  if (onlyNoOwner)         notes.push(`ไม่มีผู้ถือครอง ${shown} เครื่อง`);
-  if (onlyCentral)         notes.push(`เฉพาะส่วนกลาง ${shown} เครื่อง`);
-  if (onlyMissingEdevice)  notes.push(`ยังไม่บันทึกใน eDevice ${shown} เครื่อง`);
-  const hiddenNote = notes.length ? ` · ${notes.join(' · ')}` : '';
-  const shownLabel = shown < totalAll
-    ? `แสดง ${shown.toLocaleString()} / ${totalAll.toLocaleString()} รายการ`
-    : `แสดง ${shown.toLocaleString()} รายการ`;
-  document.getElementById('a-result-info').textContent =
-    `${shownLabel} · ค่าเช่ารวม ฿${monthly.toLocaleString('th', {minimumFractionDigits:2})} / เดือน${hiddenNote}`;
+  const filterTags = [];
+  if (edStatusF)           filterTags.push(`eDevice: ${edStatusF}`);
+  if (onlyReturn)          filterTags.push(`เครื่อง Return`);
+  if (onlyResigned)        filterTags.push(`เฉพาะลาออก`);
+  if (onlyNoOwner)         filterTags.push(`ไม่มีผู้ถือครอง`);
+  if (onlyCentral)         filterTags.push(`🏢 ส่วนกลาง`);
+  if (onlyMissingEdevice)  filterTags.push(`ยังไม่บันทึกใน eDevice`);
+
+  const isFiltered = shown < totalAll || filterTags.length > 0;
+  const countHtml = isFiltered
+    ? `<span class="ri-count">${shown.toLocaleString()}</span><span style="color:#94a3b8;font-size:.82rem"> / ${totalAll.toLocaleString()} รายการ</span>`
+    : `<span class="ri-count">${shown.toLocaleString()}</span><span style="color:#94a3b8;font-size:.82rem"> รายการ</span>`;
+
+  const monthlyHtml = `<span class="ri-monthly">฿${monthly.toLocaleString('th', {minimumFractionDigits: 0, maximumFractionDigits: 0})}</span><span style="color:#64748b;font-size:.78rem"> / เดือน</span>`;
+
+  const tagsHtml = filterTags.map(t =>
+    `<span class="ri-filter-tag">✦ ${t}</span>`
+  ).join('');
+
+  document.getElementById('a-result-info').innerHTML =
+    `${countHtml} &nbsp;·&nbsp; ${monthlyHtml}${tagsHtml ? ' &nbsp;' + tagsHtml : ''}`;
 
   const tbody = document.getElementById('asset-tbody');
   const empty = document.getElementById('a-empty');
