@@ -1634,7 +1634,7 @@ def edevice_apply():
 
 # ---------- Intranet Sync ----------
 
-INTRANET_URL    = 'http://www.amarin.intra/webappl/Contact/displays_all.asp'
+INTRANET_URL    = 'http://amarin.intra/webappl/Contact/displays_all.asp'
 INTRANET_PARAMS = 'Division=All&Section=All&sname='
 
 # BU code from section header
