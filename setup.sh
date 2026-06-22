@@ -55,6 +55,7 @@ echo ""
 # ════════════════════════════════════════════
 if [ "$MODE" = "update" ]; then
   echo "▶ ดึงโค้ดล่าสุดจาก GitHub..."
+  git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
   if [ -d "$APP_DIR/.git" ]; then
     git -C "$APP_DIR" pull --ff-only
   else
@@ -95,6 +96,7 @@ apt-get install -y -qq git python3 python3-pip python3-venv nginx curl
 
 # ── Step 2: Clone / pull repo ────────────────
 echo "[2/5] ดึงโค้ดจาก GitHub..."
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 if [ -d "$APP_DIR/.git" ]; then
   echo "      พบ repo เดิม — git pull..."
   git -C "$APP_DIR" pull --ff-only
