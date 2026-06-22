@@ -83,9 +83,18 @@ def init_db():
 
 # ---------- Routes ----------
 
+import hashlib as _hashlib
+
+def _js_version():
+    try:
+        p = os.path.join(os.path.dirname(__file__), 'static', 'js', 'app.js')
+        return _hashlib.md5(open(p, 'rb').read()).hexdigest()[:8]
+    except Exception:
+        return '0'
+
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index.html', js_version=_js_version())
 
 @app.route('/api/employees', methods=['GET'])
 def list_employees():
