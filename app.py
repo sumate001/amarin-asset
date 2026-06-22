@@ -62,10 +62,14 @@ def init_db():
             created_at          TEXT DEFAULT (datetime('now','localtime'))
         )
     ''')
-    # migration: add emp_code if not exists
+    # migration: employees table
     cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
     if 'emp_code' not in cols:
         conn.execute("ALTER TABLE employees ADD COLUMN emp_code TEXT")
+    # migration: asset_assignments — is_manual แยก manual transfer ออกจาก eDevice sync
+    aa_cols = [r[1] for r in conn.execute("PRAGMA table_info(asset_assignments)").fetchall()]
+    if 'is_manual' not in aa_cols:
+        conn.execute("ALTER TABLE asset_assignments ADD COLUMN is_manual INTEGER DEFAULT 0")
     conn.commit()
     # Seed from JSON if empty
     count = conn.execute('SELECT COUNT(*) FROM employees').fetchone()[0]
@@ -309,8 +313,19 @@ SHEETS_ID         = '***REMOVED-SHEETS_ID***'
 SHEETS_URL        = f'https://docs.google.com/spreadsheets/d/{SHEETS_ID}/export?format=csv'
 SHEETS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwRYfZAOADCUx9ClgcmsKZgNQCd4Ym12quCO-fiMboQnmwpzEl_641wKKuRJHqy7lXU/exec'
 CACHE_TTL  = 1800  # 30 min
+ASSET_CACHE_SIGNAL = os.path.join(os.path.dirname(__file__), 'asset_cache_signal.txt')
 
 _asset_cache = {'data': None, 'ts': 0}
+
+
+def _invalidate_asset_cache():
+    """Invalidate asset cache across all Gunicorn workers via file signal."""
+    _asset_cache['ts'] = 0
+    try:
+        with open(ASSET_CACHE_SIGNAL, 'w') as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
 
 def _load_edevice_list():
     """โหลด edevice_assets.json แบบ lenient — คืน list of dicts."""
@@ -332,6 +347,14 @@ def _load_edevice_list():
 
 def fetch_assets_raw(force=False):
     now = time.time()
+    # ตรวจ file signal ว่ามี worker อื่น invalidate cache ไปหรือเปล่า
+    try:
+        with open(ASSET_CACHE_SIGNAL) as f:
+            signal_ts = float(f.read().strip())
+        if signal_ts > _asset_cache['ts']:
+            _asset_cache['ts'] = 0
+    except Exception:
+        pass
     if not force and _asset_cache['data'] and now - _asset_cache['ts'] < CACHE_TTL:
         return _asset_cache['data']
 
@@ -769,13 +792,14 @@ def transfer_bulk():
         to_emp_id     = t.get('to_employee_id')  # None if stock
         note          = t.get('note', '')
 
-        # upsert assignment
+        # upsert assignment (is_manual=1 กันไม่ให้ eDevice sync ทับ)
         conn.execute(
-            '''INSERT INTO asset_assignments (asset_no, employee_id, note, created_at)
-               VALUES (?, ?, ?, datetime('now','localtime'))
+            '''INSERT INTO asset_assignments (asset_no, employee_id, note, is_manual, created_at)
+               VALUES (?, ?, ?, 1, datetime('now','localtime'))
                ON CONFLICT(asset_no) DO UPDATE SET
                  employee_id=excluded.employee_id,
                  note=excluded.note,
+                 is_manual=1,
                  created_at=excluded.created_at''',
             (asset_no, to_emp_id, note)
         )
@@ -790,7 +814,7 @@ def transfer_bulk():
 
     conn.commit()
     conn.close()
-    _asset_cache['ts'] = 0   # invalidate cache
+    _invalidate_asset_cache()
     return jsonify({'ok': True, 'transferred': len(transfers)})
 
 
@@ -811,8 +835,7 @@ def update_asset_resolution(asset_no):
     )
     conn.commit()
     conn.close()
-    # invalidate cache so next load reflects change
-    _asset_cache['ts'] = 0
+    _invalidate_asset_cache()
     return jsonify({'ok': True, 'asset_no': asset_no, 'resolution': resolution})
 
 @app.route('/api/dashboard/rental', methods=['GET'])
@@ -1657,8 +1680,9 @@ def edevice_apply():
 
     assigned, skipped, protected, code_updated = 0, 0, 0, 0
 
-    # รายการที่ถูก assign ด้วยมือ (transfer) — ห้ามทับ
-    manual_nos = {r[0] for r in conn.execute('SELECT asset_no FROM asset_assignments').fetchall()}
+    # เฉพาะที่ transfer ด้วยมือ (is_manual=1) เท่านั้นที่ห้ามทับ
+    manual_nos = {r[0] for r in conn.execute(
+        'SELECT asset_no FROM asset_assignments WHERE is_manual=1').fetchall()}
 
     for a in assets:
         ec = str(a.get('emp_code', '') or '').strip()
@@ -1695,7 +1719,7 @@ def edevice_apply():
 
     conn.commit()
     conn.close()
-    _asset_cache['ts'] = 0
+    _invalidate_asset_cache()
     return jsonify({'ok': True, 'assigned': assigned, 'protected': protected,
                     'skipped': skipped, 'code_updated': code_updated})
 
