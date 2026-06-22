@@ -1733,44 +1733,104 @@ function switchToAssets(status, ownership, edStatus) {
 let edSyncData = null;
 let edCurrentTab = 'unmatched';
 
-async function openEdeviceSyncModal() {
-  edSyncData = null;
-  document.getElementById('ed-loading').style.display = '';
+function _edShowPreview(data) {
+  edSyncData = data;
+  document.getElementById('ed-loading').style.display = 'none';
+  document.getElementById('ed-result').style.display = '';
+  document.getElementById('ed-footer').style.display = 'flex';
+  document.getElementById('ed-refresh-btn').disabled = false;
+
+  const s = data.stats;
+  document.getElementById('ed-total').textContent        = (s.total || 0).toLocaleString();
+  document.getElementById('ed-matched-code').textContent = (s.matched_code || 0).toLocaleString();
+  document.getElementById('ed-matched-name').textContent = (s.matched_name || 0).toLocaleString();
+  document.getElementById('ed-unmatched').textContent    = (s.unmatched || 0).toLocaleString();
+
+  const codeCount = (data.code_updates || []).length;
+  document.getElementById('ed-code-update-info').textContent =
+    codeCount
+      ? `🔑 พบ ${codeCount} รายการที่สามารถอัพเดทรหัสพนักงานได้อัตโนมัติ`
+      : 'ไม่มีรหัสพนักงานที่ต้องอัพเดท';
+
+  document.getElementById('ed-unmatched-badge').textContent = s.unmatched || '';
+  document.getElementById('ed-code-badge').textContent      = codeCount || '';
+
+  const source = data.cached_file ? 'ใช้ข้อมูลจากไฟล์ cache' : 'ดึงข้อมูลสดจาก eDevice';
+  document.getElementById('ed-subtitle').textContent =
+    `Asset ทั้งหมด ${s.total} รายการ · ${source}`;
+
+  showEdTab('unmatched');
+}
+
+let _edPollTimer = null;
+
+async function startEdeviceFetch() {
+  document.getElementById('ed-refresh-btn').disabled = true;
   document.getElementById('ed-result').style.display = 'none';
   document.getElementById('ed-footer').style.display = 'none';
-  document.getElementById('ed-subtitle').textContent = 'กำลังวิเคราะห์ข้อมูล...';
+  document.getElementById('ed-loading').style.display = '';
+  document.getElementById('ed-loading-text').textContent = 'กำลังดึงข้อมูลจาก eDevice...';
+  document.getElementById('ed-fetch-progress').style.display = '';
+  document.getElementById('ed-subtitle').textContent = 'กำลังดึงข้อมูล (ใช้เวลา ~3-5 นาที)';
+
+  await api('/api/sync/edevice/fetch-start', 'POST', {});
+  _pollEdeviceFetch();
+}
+
+function _pollEdeviceFetch() {
+  if (_edPollTimer) clearTimeout(_edPollTimer);
+  _edPollTimer = setTimeout(async () => {
+    try {
+      const s = await api('/api/sync/edevice/fetch-status');
+      if (s.total > 0) {
+        const pct = Math.round(s.count / s.total * 100);
+        document.getElementById('ed-progress-bar').style.width = pct + '%';
+        document.getElementById('ed-progress-text').textContent =
+          `${s.count.toLocaleString()} / ${s.total.toLocaleString()} รายการ (${pct}%)`;
+      }
+      if (s.running) {
+        _pollEdeviceFetch();
+      } else if (s.error) {
+        document.getElementById('ed-subtitle').textContent = 'ดึงข้อมูลไม่สำเร็จ';
+        document.getElementById('ed-loading-text').textContent = '❌ ' + s.error;
+        document.getElementById('ed-refresh-btn').disabled = false;
+      } else if (s.cache_ready) {
+        document.getElementById('ed-loading-text').textContent = 'กำลังวิเคราะห์ข้อมูล...';
+        document.getElementById('ed-fetch-progress').style.display = 'none';
+        const data = await api('/api/sync/edevice/preview');
+        _edShowPreview(data);
+      }
+    } catch (e) { _pollEdeviceFetch(); }
+  }, 3000);
+}
+
+async function openEdeviceSyncModal() {
+  if (_edPollTimer) { clearTimeout(_edPollTimer); _edPollTimer = null; }
+  edSyncData = null;
+  document.getElementById('ed-loading').style.display = '';
+  document.getElementById('ed-fetch-progress').style.display = 'none';
+  document.getElementById('ed-loading-text').textContent = 'กำลังวิเคราะห์ข้อมูล...';
+  document.getElementById('ed-result').style.display = 'none';
+  document.getElementById('ed-footer').style.display = 'none';
+  document.getElementById('ed-subtitle').textContent = 'กำลังโหลด...';
   document.getElementById('edevice-overlay').classList.add('open');
 
   try {
-    edSyncData = await api('/api/sync/edevice/preview');
-    document.getElementById('ed-loading').style.display = 'none';
-    document.getElementById('ed-result').style.display = '';
-    document.getElementById('ed-footer').style.display = 'flex';
-
-    const s = edSyncData.stats;
-    document.getElementById('ed-total').textContent        = (s.total || 0).toLocaleString();
-    document.getElementById('ed-matched-code').textContent = (s.matched_code || 0).toLocaleString();
-    document.getElementById('ed-matched-name').textContent = (s.matched_name || 0).toLocaleString();
-    document.getElementById('ed-unmatched').textContent    = (s.unmatched || 0).toLocaleString();
-
-    const codeCount = (edSyncData.code_updates || []).length;
-    document.getElementById('ed-code-update-info').textContent =
-      codeCount
-        ? `🔑 พบ ${codeCount} รายการที่สามารถอัพเดทรหัสพนักงานได้อัตโนมัติ`
-        : 'ไม่มีรหัสพนักงานที่ต้องอัพเดท';
-
-    const setBadge = (id, count) => {
-      const el = document.getElementById(id);
-      el.textContent = count || '';
-    };
-    setBadge('ed-unmatched-badge', s.unmatched);
-    setBadge('ed-code-badge',      codeCount);
-
-    const source = edSyncData.cached_file ? 'ใช้ข้อมูลจากไฟล์ cache' : 'ดึงข้อมูลสดจาก eDevice';
-    document.getElementById('ed-subtitle').textContent =
-      `Asset ทั้งหมด ${s.total} รายการ · ${source}`;
-
-    showEdTab('unmatched');
+    // ตรวจก่อนว่า background fetch กำลังทำงานอยู่ไหม
+    const status = await api('/api/sync/edevice/fetch-status');
+    if (status.running) {
+      document.getElementById('ed-subtitle').textContent = 'กำลังดึงข้อมูล (ใช้เวลา ~3-5 นาที)';
+      document.getElementById('ed-fetch-progress').style.display = '';
+      _pollEdeviceFetch();
+      return;
+    }
+    if (!status.cache_ready) {
+      // ยังไม่มี cache — เริ่ม background fetch ทันที
+      await startEdeviceFetch();
+      return;
+    }
+    const data = await api('/api/sync/edevice/preview');
+    _edShowPreview(data);
   } catch (e) {
     document.getElementById('ed-subtitle').textContent = 'เชื่อมต่อไม่สำเร็จ';
     document.getElementById('ed-loading').innerHTML =
@@ -1781,6 +1841,7 @@ async function openEdeviceSyncModal() {
 function closeEdeviceSyncModal() {
   document.getElementById('edevice-overlay').classList.remove('open');
   edSyncData = null;
+  if (_edPollTimer) { clearTimeout(_edPollTimer); _edPollTimer = null; }
 }
 
 function closeEdeviceOnOverlay(e) {
@@ -1832,10 +1893,8 @@ async function applyEdeviceSync() {
   btn.disabled = true;
   btn.textContent = 'กำลัง Sync...';
 
-  const forceLive = document.getElementById('ed-force-live').checked;
-
   try {
-    const r = await api('/api/sync/edevice/apply', 'POST', { force_live: forceLive });
+    const r = await api('/api/sync/edevice/apply', 'POST', { force_live: false });
     showToast(
       `Sync eDevice เสร็จสิ้น · กำหนด ${r.assigned} · อัพเดทรหัส ${r.code_updated} · ข้าม ${r.skipped}`,
       'success'

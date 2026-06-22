@@ -333,7 +333,13 @@
     <div class="modal-body" style="padding:0">
       <div id="ed-loading" style="text-align:center;padding:40px;color:#94a3b8">
         <div style="font-size:2rem;margin-bottom:12px">⏳</div>
-        <div>กำลังวิเคราะห์ข้อมูล...</div>
+        <div id="ed-loading-text">กำลังวิเคราะห์ข้อมูล...</div>
+        <div id="ed-fetch-progress" style="display:none;margin-top:12px">
+          <div style="background:#e2e8f0;border-radius:8px;height:8px;overflow:hidden;width:280px;margin:0 auto">
+            <div id="ed-progress-bar" style="background:#3b82f6;height:100%;width:0%;transition:width .5s"></div>
+          </div>
+          <div id="ed-progress-text" style="font-size:.75rem;margin-top:6px;color:#64748b"></div>
+        </div>
       </div>
       <div id="ed-result" style="display:none">
         <!-- summary cards -->
@@ -372,9 +378,9 @@
       </div>
     </div>
     <div class="modal-footer" id="ed-footer" style="display:none;justify-content:space-between">
-      <label style="display:flex;align-items:center;gap:6px;font-size:.78rem;color:#64748b;cursor:pointer">
-        <input type="checkbox" id="ed-force-live"> ดึงข้อมูลใหม่จาก eDevice (ใช้เวลา ~8 นาที)
-      </label>
+      <button class="btn btn-secondary" id="ed-refresh-btn" onclick="startEdeviceFetch()" style="font-size:.78rem">
+        🔄 ดึงข้อมูลใหม่จาก eDevice
+      </button>
       <div style="display:flex;gap:8px">
         <button class="btn btn-secondary" onclick="closeEdeviceSyncModal()">ยกเลิก</button>
         <button class="btn btn-primary" id="ed-confirm-btn" onclick="applyEdeviceSync()">✓ ยืนยัน Sync</button>

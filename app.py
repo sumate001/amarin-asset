@@ -1202,6 +1202,22 @@ def export_assets():
 # ---------- eDevice Sync ----------
 
 EDEVICE_JSON = os.path.join(os.path.dirname(__file__), 'edevice_assets.json')
+
+import threading as _threading
+_edevice_fetch_state = {'running': False, 'done': False, 'error': None, 'count': 0, 'total': 0}
+_edevice_fetch_lock  = _threading.Lock()
+
+def _edevice_fetch_bg():
+    global _edevice_fetch_state
+    try:
+        assets = fetch_edevice_assets(force_live=True)
+        with _edevice_fetch_lock:
+            _edevice_fetch_state = {'running': False, 'done': True, 'error': None,
+                                    'count': len(assets), 'total': len(assets)}
+    except Exception as e:
+        with _edevice_fetch_lock:
+            _edevice_fetch_state = {'running': False, 'done': False, 'error': str(e),
+                                    'count': 0, 'total': 0}
 EDEVICE_LOGIN_URL  = 'http://amarin.intra/webappl/acorporate/index.aspx?s=out'
 EDEVICE_CORP_URL   = 'http://www.amarin.intra/webappl/eDevice_ATV/***REMOVED-EDEVICE_INIT_PATH***'
 EDEVICE_DETAIL_URL     = 'http://www.amarin.intra/webappl/eDevice_ATV/ComputerDetail.asp?id={}'
@@ -1450,9 +1466,11 @@ def fetch_edevice_assets(force_live=False):
     if not force_live and os.path.exists(EDEVICE_JSON):
         try:
             with open(EDEVICE_JSON, encoding='utf-8', errors='replace') as f:
-                return json.load(f)
+                data = json.load(f)
+                if data:
+                    return data
         except Exception:
-            pass  # JSON เสีย — fall through ไป live fetch
+            pass  # JSON เสีย / ว่าง — fall through ไป live fetch
 
     # live fetch — ดึง ID จากทั้ง PC (Computer1.asp) และ Mac (Macintosh.asp)
     cookies = _edevice_login()
@@ -1467,6 +1485,10 @@ def fetch_edevice_assets(force_live=False):
 
     pc_ids  = get_ids(EDEVICE_LIST_URL)
     mac_ids = get_ids(EDEVICE_MAC_URL)
+
+    total_ids = len(pc_ids) + len(mac_ids)
+    with _edevice_fetch_lock:
+        _edevice_fetch_state['total'] = total_ids
 
     # map: cid → detail_url (PC และ Mac ใช้ endpoint ต่างกัน)
     cid_url_map = {}
@@ -1483,9 +1505,9 @@ def fetch_edevice_assets(force_live=False):
             if r2.status_code == 200 and len(r2.content) > 3000:
                 text = r2.content.decode('tis-620', errors='replace')
                 if cid in mac_ids:
-                    rec = _parse_mac_detail(text, cid)   # Mac parser
+                    rec = _parse_mac_detail(text, cid)
                 else:
-                    rec = _parse_computer_detail(text, cid)  # PC parser
+                    rec = _parse_computer_detail(text, cid)
                 return rec
         except: pass
         return None
@@ -1497,6 +1519,8 @@ def fetch_edevice_assets(force_live=False):
             r2 = result.result()
             if r2:
                 assets.append(r2)
+                with _edevice_fetch_lock:
+                    _edevice_fetch_state['count'] = len(assets)
 
     with open(EDEVICE_JSON, 'w', encoding='utf-8') as f:
         json.dump(assets, f, ensure_ascii=False, indent=2)
@@ -1530,6 +1554,34 @@ def debug_mac_detail():
         return jsonify({'cid': cid, 'url': url, 'rows': rows_out})
     except Exception as e:
         return jsonify({'error': str(e)})
+
+
+@app.route('/api/sync/edevice/fetch-start', methods=['POST'])
+def edevice_fetch_start():
+    """เริ่ม background fetch จาก eDevice (non-blocking)."""
+    global _edevice_fetch_state
+    with _edevice_fetch_lock:
+        if _edevice_fetch_state.get('running'):
+            return jsonify({'status': 'already_running', **_edevice_fetch_state})
+        _edevice_fetch_state = {'running': True, 'done': False, 'error': None, 'count': 0, 'total': 0}
+    t = _threading.Thread(target=_edevice_fetch_bg, daemon=True)
+    t.start()
+    return jsonify({'status': 'started'})
+
+
+@app.route('/api/sync/edevice/fetch-status', methods=['GET'])
+def edevice_fetch_status():
+    """สถานะ background fetch."""
+    with _edevice_fetch_lock:
+        state = dict(_edevice_fetch_state)
+    cache_ok = False
+    try:
+        if os.path.exists(EDEVICE_JSON) and os.path.getsize(EDEVICE_JSON) > 0:
+            cache_ok = True
+    except Exception:
+        pass
+    state['cache_ready'] = cache_ok
+    return jsonify(state)
 
 
 @app.route('/api/sync/edevice/preview', methods=['GET'])
