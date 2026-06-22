@@ -1,8 +1,8 @@
-# Amarin Employee Database
+# Amarin Employee & IT Asset Database
 
 ระบบบริหารข้อมูลพนักงานและทรัพย์สิน IT สำหรับกลุ่มบริษัทอมรินทร์
 
-> **Version 1.3.2** · Python Flask + SQLite + Vanilla JS
+> **Version 1.4.0** · Python Flask + SQLite + Vanilla JS
 
 ---
 
@@ -12,26 +12,23 @@
 - CRUD พนักงาน พร้อม BU / แผนก / ตำแหน่ง / email / โทรศัพท์
 - ค้นหาและกรองตาม BU, แผนก, สถานะ, หรือผู้มีทรัพย์สิน IT
 - Import / Export Excel
-- Sync ข้อมูลจาก Amarin Intranet (เปรียบเทียบ diff ก่อน apply)
+- **Sync จาก Amarin Intranet** — เปรียบเทียบ diff ก่อน apply (preview → confirm)
 
 ### 💻 IT Assets
 - แสดงเครื่องทั้งหมดจาก **eDevice** + สัญญาเช่าจาก **Google Sheets**
 - Summary cards 7 ใบ: เครื่องทั้งหมด · ค่าเช่า/เดือน · 🔴 หมดสัญญาเช่า · ⚠️ eDevice Expire · 🟠 หมดใน 90 วัน · 🟡 หมดใน 180 วัน · 🟢 อยู่ในระยะสัญญา
-- **แยก "หมดสัญญาเช่า" ออกจาก "eDevice Expire"** — eDevice Expire นับทุกเครื่อง (ซื้อ+เช่า) ที่ eDevice ระบุ Expire
-- กรองตามประเภท, ประเภทสัญญา (เช่า/ซื้อ), BU, สถานะสัญญา, eDevice status, เครื่อง Return, เครื่องที่ยังไม่บันทึกใน eDevice
-- Sync eDevice: ดึงรายละเอียดเครื่องและ match รหัสพนักงาน
+- กรองตามประเภท, สัญญา (เช่า/ซื้อ), BU, สถานะ, eDevice status, Return, ยังไม่บันทึกใน eDevice
+- **Sync eDevice** — background fetch (ใช้เวลา ~3-5 นาที) พร้อม progress bar แสดง live
 - Export Excel
 - โอนทรัพย์สินระหว่างพนักงาน / คืน Stock เมื่อพนักงานออก
-- Popup ทรัพย์สิน IT: แสดงรายละเอียดครบในรูปแบบ card พร้อมสีกรอบตามสถานะ
 - ตรวจจับเครื่อง **"ส่วนกลาง"** จาก eDevice — แสดง badge สีฟ้าแทนชื่อพนักงาน
 
-### 📊 Dashboard
-แบ่งเป็น 3 แท็บ:
+### 📊 Dashboard (3 แท็บ)
 
 | แท็บ | รายละเอียด |
 |---|---|
 | **พนักงาน** | สถิติพนักงาน แยก BU + Top 10 แผนก |
-| **บริหารสัญญาเช่า** | Summary cards 7 ใบ (รวม eDevice Expire), Timeline สัญญาหมดรายเดือน (คลิก expand ดูรายละเอียดครบ), สัญญาวิกฤต/เกินกำหนด |
+| **บริหารสัญญาเช่า** | Summary cards 7 ใบ, Timeline สัญญาหมดรายเดือน, สัญญาวิกฤต |
 | **บริหารเครื่อง** | ความผิดปกติ: ไม่ระบุ BU, ไม่บันทึกใน eDevice, ยังไม่ระบุประเภทสัญญา |
 
 ---
@@ -44,69 +41,136 @@
 | Database | SQLite (`employees.db`) |
 | Frontend | Vanilla JS · HTML5 · CSS3 (ไม่มี framework) |
 | Production | Gunicorn + Nginx + systemd (Linux) |
-| Data Sources | eDevice (Intranet), Google Sheets, Amarin Intranet |
+| Data Sources | eDevice (Intranet), Google Sheets CSV, Amarin Intranet |
 
 ---
 
 ## Project Structure
 
 ```
-employee/
-├── app.py                    # Flask app — routes + business logic ทั้งหมด
-├── employees.db              # SQLite database (ไม่อยู่ใน git)
-├── edevice_assets.json       # Cache ข้อมูล eDevice (สร้างอัตโนมัติ)
+amarin-asset/
+├── app.py                      # Flask app — routes + business logic ทั้งหมด (~1960 บรรทัด)
+├── employees.db                # SQLite database (ไม่อยู่ใน git — .gitignore)
+├── edevice_assets.json         # Cache ข้อมูล eDevice (สร้างอัตโนมัติ — ไม่อยู่ใน git)
+├── edevice_fetch_status.json   # สถานะ background fetch (สร้างอัตโนมัติ)
+├── employees_extracted.json    # Seed data พนักงานเริ่มต้น (ใช้ตอน init_db เท่านั้น)
 ├── requirements.txt
-├── start.sh                  # Dev server
-├── start-prod.sh             # Production (Gunicorn)
-├── install.py                # Universal installer (macOS/Linux/Windows)
+├── setup.sh                    # One-line installer + updater (Linux)
+├── start.sh                    # Dev server
+├── start-prod.sh               # Production server (Gunicorn)
+├── install.py                  # Universal installer (macOS/Linux/Windows)
 ├── templates/
-│   └── index.html            # Single-page HTML
+│   └── index.html              # Single-page HTML
 ├── static/
 │   ├── css/style.css
-│   └── js/app.js
+│   └── js/app.js               # Frontend JS ทั้งหมด (~2000 บรรทัด)
 └── deploy/
-    ├── install.sh            # Linux first-time setup
-    ├── update.sh             # Update code (ไม่แตะ .db)
-    ├── amarin-employee.service
+    ├── amarin-employee.service # systemd unit file
     └── nginx-amarin-employee.conf
 ```
 
 ---
 
-## IT Asset Data Flow
+## Quick Start
 
-```
-eDevice Intranet (แหล่งหลัก — 900+ เครื่อง)
-  computer_id, serial_no, emp_name, device_type, brand, dept, bu
-        │
-        │  join ด้วย Serial No.
-        ▼
-Google Sheets (สัญญาเช่า)
-  asset_no, end_date, monthly_charge, customer, PO_no, model
-        │
-        │  + Sheets-only (S/N ไม่มีใน eDevice)
-        ▼
-fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
-        │
-        ▼
-/api/assets  →  browser
+### ⚡ One-line Install (Linux)
+
+```bash
+# ติดตั้งครั้งแรก (สร้าง DB ใหม่ seed จาก employees_extracted.json)
+curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash
+
+# ติดตั้งพร้อม database ที่มีอยู่
+curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash -s -- --db /path/to/employees.db
+
+# อัพเดทโค้ดโดยไม่แตะ database
+curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash -s -- --update
 ```
 
-**กฎการ merge:**
-1. eDevice records ทั้งหมด → join Sheets ด้วย S/N ถ้าตรงกัน
-2. Sheets records ที่ S/N ไม่มีใน eDevice → เพิ่มเข้าไปด้วย
-3. `asset_assignments` (SQLite) → override ผู้ถือครองจาก eDevice
+Script ทำทุกอย่างอัตโนมัติ: clone → venv → pip install → init DB → systemd → nginx → print URL
+
+### 🖥 Local Development
+
+```bash
+git clone https://github.com/sumate001/amarin-asset.git
+cd amarin-asset
+pip install -r requirements.txt
+python app.py
+# เปิด http://localhost:5050
+```
+
+> ถ้าไม่มี `employees.db` จะสร้างและ seed จาก `employees_extracted.json` อัตโนมัติ
+
+---
+
+## Deployment (Production)
+
+### Services ที่ติดตั้ง
+
+| Service | รายละเอียด |
+|---|---|
+| **Gunicorn** | 3 workers · timeout 300s · bind `127.0.0.1:5100` |
+| **Nginx** | reverse proxy port 80 → 5100 · gzip · static files cache 7d |
+| **systemd** | `amarin-employee.service` · auto-restart |
+
+### Commands
+
+```bash
+# ดูสถานะ
+systemctl status amarin-employee
+
+# ดู logs realtime
+journalctl -u amarin-employee -f
+
+# Restart
+sudo systemctl restart amarin-employee
+
+# อัพเดทโค้ด
+sudo bash /path/to/setup.sh --update
+```
+
+### Backup Database
+
+```bash
+# สำรอง
+cp /opt/amarin-employee/employees.db employees_backup_$(date +%Y%m%d).db
+
+# Restore
+sudo cp employees_backup_20260622.db /opt/amarin-employee/employees.db
+sudo systemctl restart amarin-employee
+```
+
+---
+
+## Configuration
+
+ค่า config อยู่ต้นไฟล์ `app.py`:
+
+```python
+DB        = 'employees.db'    # path ของ SQLite
+CACHE_TTL = 1800              # cache assets (วินาที, default 30 นาที)
+
+# Google Sheets (สัญญาเช่า)
+SHEETS_ID  = '1AVJbcZq-...'  # Spreadsheet ID
+SHEETS_URL = f'https://docs.google.com/spreadsheets/d/{SHEETS_ID}/export?format=csv'
+
+# eDevice Intranet
+EDEVICE_LOGIN_URL = 'http://amarin.intra/webappl/acorporate/index.aspx?s=out'
+EDEVICE_LIST_URL  = 'http://www.amarin.intra/webappl/eDevice_ATV/Computer1.asp'
+```
+
+> **ข้อจำกัด:** Sync eDevice และ Sync Intranet ต้องรันบนเครื่องที่เชื่อมต่อ **Intranet อมรินทร์** เท่านั้น
 
 ---
 
 ## Database Schema
 
 ### `employees`
+
 | คอลัมน์ | ชนิด | คำอธิบาย |
 |---|---|---|
 | id | INTEGER PK | รหัสในระบบ |
-| emp_code | TEXT | รหัสพนักงาน |
-| name | TEXT | ชื่อ-นามสกุล |
+| emp_code | TEXT | รหัสพนักงาน (จาก eDevice) |
+| name | TEXT NOT NULL | ชื่อ-นามสกุล |
 | nickname | TEXT | ชื่อเล่น |
 | bu / bu_code | TEXT | Business Unit |
 | department | TEXT | แผนก |
@@ -116,13 +180,13 @@ fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
 | status | TEXT | `active` / `inactive` |
 
 ### `asset_assignments`
-เก็บว่า asset ไหนกับพนักงานคนไหน — override ข้อมูล eDevice/Sheets
+เก็บว่า asset_no ไหนกับพนักงาน id ไหน — **override** ข้อมูลจาก eDevice
 
 ### `asset_notes`
-สถานะดำเนินการของ asset ที่หมดสัญญา (`pending` / `returned` / `renewed` / `bought`)
+สถานะดำเนินการของ asset: `pending` / `returned` / `renewed` / `bought`
 
 ### `asset_transfer_log`
-ประวัติการโอน asset ระหว่างพนักงาน
+ประวัติการโอน asset ระหว่างพนักงาน (from_id, to_id, transfer_type)
 
 ---
 
@@ -132,12 +196,14 @@ fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
 
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
-| GET | `/api/employees` | รายชื่อพนักงาน (pagination + filter) |
-| GET | `/api/employees/<id>` | ข้อมูลพนักงานรายคน |
+| GET | `/api/employees` | รายชื่อ (pagination + filter: q, bu, dept, status) |
+| GET | `/api/employees/<id>` | พนักงานรายคน |
 | POST | `/api/employees` | เพิ่มพนักงาน |
 | PUT | `/api/employees/<id>` | แก้ไขพนักงาน |
 | DELETE | `/api/employees/<id>` | ลบพนักงาน |
 | GET | `/api/employees/<id>/assets` | ทรัพย์สิน IT ของพนักงาน |
+| GET | `/api/filters` | BU list + department list |
+| GET | `/api/stats` | สถิติ (total, by_bu, by_dept) |
 | GET | `/api/export/excel` | Export Excel |
 | POST | `/api/import/excel` | Import Excel |
 
@@ -146,7 +212,8 @@ fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
 | GET | `/api/assets` | รายการ asset (cache 30 นาที) |
-| GET | `/api/assets/meta` | ประเภทและบริษัทสำหรับ filter |
+| GET | `/api/assets/meta` | ประเภทและ BU list สำหรับ filter |
+| GET | `/api/assets/employee-map` | map employee_id → count |
 | GET | `/api/assets/export` | Export Excel |
 | PUT | `/api/assets/<asset_no>/resolution` | อัพเดทสถานะดำเนินการ |
 | POST | `/api/assets/transfer-bulk` | โอน asset หลายรายการ |
@@ -155,37 +222,43 @@ fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
 
 | Param | ค่า | คำอธิบาย |
 |---|---|---|
-| `q` | text | ค้นหาชื่อ, รุ่น, S/N, รหัสเครื่อง |
-| `status` | `expired` / `critical` / `warning` / `ok` | สถานะสัญญา |
+| `q` | text | ค้นหา S/N, รหัสเครื่อง, ชื่อพนักงาน |
+| `status` | `expired/critical/warning/ok/unknown` | สถานะสัญญา |
 | `ownership` | `เช่า` / `ซื้อ` | ประเภทสัญญา |
 | `type` | text | ประเภทเครื่อง |
 | `bu` | bu_code | Business Unit |
-| `refresh` | `1` | force reload จาก eDevice + Sheets |
 
-### Dashboard & Sync
+### Sync
 
 | Method | Endpoint | คำอธิบาย |
 |---|---|---|
-| GET | `/api/dashboard/rental` | ข้อมูลแท็บบริหารสัญญา + timeline |
-| GET | `/api/sync/preview` | Preview diff จาก Intranet |
-| POST | `/api/sync/apply` | Apply sync Intranet |
-| POST | `/api/sync-edevice` | Sync ข้อมูล eDevice |
+| GET | `/api/sync/preview` | Preview diff จาก Intranet (พนักงาน) |
+| POST | `/api/sync/apply` | Apply sync พนักงาน |
+| POST | `/api/sync/edevice/fetch-start` | เริ่ม background fetch จาก eDevice |
+| GET | `/api/sync/edevice/fetch-status` | สถานะ background fetch (running/done/count/total) |
+| GET | `/api/sync/edevice/preview` | Preview match eDevice ↔ พนักงาน (ใช้ cache) |
+| POST | `/api/sync/edevice/apply` | Apply sync eDevice → asset_assignments |
+
+### Dashboard
+
+| Method | Endpoint | คำอธิบาย |
+|---|---|---|
+| GET | `/api/dashboard/rental` | ข้อมูลแท็บบริหารสัญญา + timeline รายเดือน |
 
 ---
 
 ## Contract Status
 
-| สถานะ | เงื่อนไข | หมายเหตุ |
-|---|---|---|
-| 🔴 หมดสัญญาเช่า | end_date < วันนี้ และ eDevice ≠ Expire | สัญญาเช่าหมดอายุจริง |
-| ⚠️ eDevice Expire | eDevice status = Expire (ทุกเครื่อง) | ทั้งซื้อและเช่า — ควรตรวจสอบ |
-| 🟠 `critical` | เหลือ ≤ 90 วัน | |
-| 🟡 `warning` | เหลือ ≤ 180 วัน | |
-| 🟢 `ok` | เหลือ > 180 วัน | |
-| ⚪ `unknown` | ไม่มี end_date | เครื่องที่ไม่อยู่ในสัญญา Sheets |
-| 🗑 ตัดจำหน่าย | เครื่องซื้อ + eDevice = Expire | แสดงในคอลัม สถานะสัญญา |
-| ↩ คืนแล้ว | eDevice = Return หรือ Sheets Returned | |
-| 🏢 ส่วนกลาง | eDevice ระบุ "ทรัพย์สินของ: ส่วนกลาง" | แสดง badge สีฟ้าในคอลัมน์ผู้ถือครอง |
+| สถานะ | เงื่อนไข |
+|---|---|
+| 🔴 หมดสัญญาเช่า | end_date < วันนี้ และ eDevice ≠ Expire |
+| ⚠️ eDevice Expire | eDevice status = Expire (ทุกเครื่อง ทั้งซื้อและเช่า) |
+| 🟠 `critical` | เหลือ ≤ 90 วัน |
+| 🟡 `warning` | เหลือ ≤ 180 วัน |
+| 🟢 `ok` | เหลือ > 180 วัน |
+| ⚪ `unknown` | ไม่มี end_date (eDevice-only) |
+| 🗑 ตัดจำหน่าย | เครื่องซื้อ + eDevice = Expire |
+| 🏢 ส่วนกลาง | eDevice ระบุ "ทรัพย์สินของ: ส่วนกลาง" |
 
 ---
 
@@ -199,181 +272,14 @@ fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
 | ABOOK | Amarin Book Center |
 | AMTV | Amarin Television |
 | AOMNI | Amarin Omniverse |
-| AME | Amarin Media & Event |
-
----
-
-## Deployment
-
-### ⚡ One-line Deploy (Linux)
-
-```bash
-# ติดตั้งครั้งแรก — ไม่มี database (สร้างใหม่ว่างเปล่า)
-curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash
-
-# ติดตั้งพร้อม database ที่มีอยู่แล้ว
-curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash -s -- --db /path/to/employees.db
-
-# ถ้ามี employees.db อยู่ใน directory ปัจจุบัน — copy อัตโนมัติ
-curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash
-
-# อัพเดทโค้ด (ไม่แตะ database)
-curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash -s -- --update
-```
-
-Script ทำทุกอย่างอัตโนมัติ: **clone repo → venv → dependencies → database → systemd → nginx → print URL**
-
----
-
-### 🖥 Local / Development
-
-```bash
-# 1. Clone
-git clone https://github.com/sumate001/amarin-asset.git
-cd amarin-asset
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Run
-python app.py
-# หรือ
-bash start.sh
-
-# เปิด http://localhost:5050
-```
-
-> **หมายเหตุ:** ต้องมีไฟล์ `employees.db` อยู่ในโฟลเดอร์ก่อน  
-> ถ้าไม่มี app จะสร้าง database ใหม่โดยอัตโนมัติ (ข้อมูลพนักงานว่างเปล่า)
-
----
-
-### 🐧 Linux (Ubuntu/Debian) — Production
-
-#### ติดตั้งครั้งแรก
-
-```bash
-# 1. Clone repo
-cd /opt
-sudo git clone https://github.com/sumate001/amarin-asset.git
-sudo chown -R $USER:$USER /opt/amarin-asset
-cd /opt/amarin-asset
-
-# 2. สร้าง virtual environment
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 3. คัดลอก employees.db เข้ามา
-cp /path/to/employees.db .
-
-# 4. ติดตั้ง systemd service
-sudo cp deploy/amarin-employee.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable amarin-employee
-sudo systemctl start amarin-employee
-
-# 5. ติดตั้ง Nginx
-sudo cp deploy/nginx-amarin-employee.conf /etc/nginx/sites-available/amarin-employee
-sudo ln -s /etc/nginx/sites-available/amarin-employee /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-#### อัพเดท code (ไม่กระทบ database)
-
-```bash
-cd /opt/amarin-asset
-bash deploy/update.sh
-```
-
-หรือทำเอง:
-
-```bash
-git pull origin main
-sudo systemctl restart amarin-employee
-```
-
-#### ดู logs
-
-```bash
-sudo journalctl -u amarin-employee -f
-```
-
----
-
-### 🍎 macOS — Production (launchd)
-
-```bash
-# 1. Clone และติดตั้ง
-cd ~/Desktop/project
-git clone https://github.com/sumate001/amarin-asset.git employee
-cd employee
-pip3 install -r requirements.txt
-
-# 2. รันด้วย Gunicorn
-bash start-prod.sh
-
-# หรือใช้ installer อัตโนมัติ
-python3 install.py
-```
-
----
-
-### 🪟 Windows — Production (NSSM)
-
-```powershell
-# 1. Clone
-git clone https://github.com/sumate001/amarin-asset.git
-cd amarin-asset
-
-# 2. ติดตั้ง dependencies
-pip install -r requirements.txt
-
-# 3. ใช้ installer
-python install.py
-
-# หรือรัน dev server
-python app.py
-```
-
----
-
-### ⚙️ Environment / Config
-
-ค่า config อยู่ในส่วนบนของ `app.py`:
-
-```python
-PORT      = 5050          # port ที่ใช้รัน
-CACHE_TTL = 1800          # cache assets (วินาที, default 30 นาที)
-DB_PATH   = 'employees.db'
-
-# Google Sheets (ข้อมูลสัญญาเช่า)
-SHEET_ID  = '...'         # Google Sheets ID
-SHEET_GID = '...'         # Sheet tab GID
-
-# eDevice (Intranet)
-EDEVICE_BASE = 'http://amarin.intra/webappl/eDevice_ATV/'
-```
-
-> **ข้อจำกัด:** การ Sync eDevice และ Sync Intranet ต้องรันบนเครื่องที่เชื่อมต่อ **Intranet อมรินทร์** เท่านั้น
-
----
-
-### 🔄 Backup Database
-
-```bash
-# สำรอง
-cp employees.db employees_backup_$(date +%Y%m%d).db
-
-# Restore
-cp employees_backup_20260612.db employees.db
-sudo systemctl restart amarin-employee
-```
+| AME | Amarin Media & Event / AME Imaginative |
 
 ---
 
 ## Notes
 
-- `edevice_assets.json` — cache ข้อมูลเครื่องจาก eDevice สร้างอัตโนมัติหลัง Sync ไม่ต้อง commit
+- `edevice_assets.json` — cache ข้อมูลเครื่องจาก eDevice สร้างอัตโนมัติ ไม่ต้อง commit
+- `edevice_fetch_status.json` — state ของ background fetch สร้างอัตโนมัติ ไม่ต้อง commit
 - `employees.db` — ห้าม commit เด็ดขาด (อยู่ใน `.gitignore`)
-- Cache assets หมดอายุทุก 30 นาที หรือกด Sync eDevice เพื่อ invalidate ทันที
+- Cache assets หมดอายุทุก 30 นาที หรือหลัง sync eDevice apply ทันที
+- `app.js` ใช้ cache-bust ด้วย md5 hash ใน URL (`?v=xxxxxxxx`) — browser จะโหลดใหม่ทุกครั้งที่ไฟล์เปลี่ยน

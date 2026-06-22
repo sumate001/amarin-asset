@@ -1,97 +1,204 @@
-# Developer Guide — Amarin Employee Database
+# Developer Guide — Amarin Employee & IT Asset Database
 
-คู่มือสำหรับนักพัฒนาที่ต้องการต่อยอดหรือแก้ไขโปรเจ็คนี้
+คู่มือสำหรับนักพัฒนาที่จะต่อยอดหรือแก้ไขโปรเจกต์นี้
 
 ---
 
 ## สารบัญ
 
 1. [Architecture Overview](#1-architecture-overview)
-2. [Backend — app.py](#2-backend--apppy)
-3. [Frontend — app.js](#3-frontend--appjs)
-4. [Data Flow: IT Assets](#4-data-flow-it-assets)
-5. [Data Flow: Sync Intranet](#5-data-flow-sync-intranet)
-6. [Data Flow: eDevice Sync](#6-data-flow-edevice-sync)
-7. [การเพิ่ม Feature ใหม่](#7-การเพิ่ม-feature-ใหม่)
-8. [Pitfalls และข้อควรระวัง](#8-pitfalls-และข้อควรระวัง)
+2. [Environment Setup](#2-environment-setup)
+3. [Backend — app.py](#3-backend--apppy)
+4. [Frontend — app.js](#4-frontend--appjs)
+5. [Data Flow: IT Assets](#5-data-flow-it-assets)
+6. [Data Flow: Sync Intranet (พนักงาน)](#6-data-flow-sync-intranet-พนักงาน)
+7. [Data Flow: eDevice Sync](#7-data-flow-edevice-sync)
+8. [Background Fetch System](#8-background-fetch-system)
+9. [Production Architecture](#9-production-architecture)
+10. [การเพิ่ม Feature ใหม่](#10-การเพิ่ม-feature-ใหม่)
+11. [Pitfalls และข้อควรระวัง](#11-pitfalls-และข้อควรระวัง)
 
 ---
 
 ## 1. Architecture Overview
 
 ```
-Browser (SPA)
-  └── fetch() → Flask routes (app.py)
-                  ├── SQLite (employees.db)           ← ข้อมูลหลัก + manual overrides
-                  ├── eDevice (TIS-620 + BS4)         ← primary asset source
-                  ├── Google Sheets CSV               ← contract info (end_date, PO, ฯลฯ)
-                  └── Amarin Intranet (TIS-620 + BS4) ← ข้อมูลพนักงาน
+Browser (SPA — Single Page App)
+  └── fetch() / polling ──→ Nginx (port 80)
+                                └── proxy_pass ──→ Gunicorn (port 5100, 3 workers)
+                                                        └── Flask app.py
+                                                              ├── SQLite employees.db
+                                                              ├── eDevice Intranet (HTTP scraping)
+                                                              ├── Google Sheets CSV (HTTP)
+                                                              └── Amarin Intranet (HTTP scraping)
 ```
 
-ทุกอย่างอยู่ในไฟล์เดียวไม่กี่ไฟล์ ไม่มี ORM ไม่มี frontend build step
+**ไม่มี:** ORM, frontend build step (webpack/vite), database migration tool, task queue (Celery/Redis)  
+**มี:** raw SQL, BeautifulSoup scraping, vanilla JS, file-based background task state
 
 ---
 
-## 2. Backend — `app.py`
+## 2. Environment Setup
 
-### โครงสร้างไฟล์
+### Dev
+
+```bash
+git clone https://github.com/sumate001/amarin-asset.git
+cd amarin-asset
+
+# สร้าง virtual environment (แนะนำ)
+python3 -m venv venv
+source venv/bin/activate   # หรือ venv\Scripts\activate บน Windows
+
+pip install -r requirements.txt
+
+# รัน dev server (auto-reload)
+python app.py
+# หรือ
+bash start.sh
+```
+
+Dev server รันที่ port **5050** พร้อม Flask debug mode
+
+### Production Path
 
 ```
-init_db()                ← สร้าง schema + migration + seed
-get_db()                 ← sqlite3.connect() พร้อม row_factory
+/opt/amarin-employee/        ← app directory (git clone)
+/opt/amarin-employee/venv/   ← Python virtualenv
+/var/log/amarin-employee/    ← access.log, error.log
+/etc/systemd/system/amarin-employee.service
+/etc/nginx/sites-available/amarin-employee
+```
 
-_load_edevice_list()     ← อ่าน edevice_assets.json แบบ lenient
-fetch_assets_raw()       ← core: merge eDevice + Sheets + SQLite → cache
+### Dependencies (requirements.txt)
 
-fetch_edevice_assets()   ← อ่าน cache JSON หรือ live scrape
-_edevice_login()         ← POST login + scrape VIEWSTATE
-_parse_computer_detail() ← BeautifulSoup → dict สำหรับแต่ละเครื่อง
-
-fetch_intranet_employees() ← scrape Intranet contact page
-_norm(s)                 ← normalize string สำหรับ name matching
-
-Routes: /api/employees, /api/assets, /api/sync, ...
+```
+flask
+requests
+beautifulsoup4
+openpyxl
+gunicorn
 ```
 
 ---
 
-## 3. Frontend — `app.js`
+## 3. Backend — `app.py`
+
+### โครงสร้างไฟล์ (ตามลำดับ)
+
+```
+# imports + constants (DB, CACHE_TTL, SHEETS_ID, EDEVICE_URLs)
+
+init_db()          ← สร้าง schema + auto-migration + seed จาก JSON
+get_db()           ← sqlite3.connect() พร้อม row_factory=sqlite3.Row
+
+_js_version()      ← md5 hash ของ app.js (ใช้ cache-bust URL param)
+
+# ─── Routes: Employees ────────────────────────────────
+/                  ← render index.html พร้อม js_version
+/api/employees     ← CRUD + pagination + filter
+/api/filters       ← BU list, department list
+/api/stats         ← สถิติ total/by_bu/by_dept
+/api/export/excel  ← openpyxl export
+/api/import/excel  ← openpyxl import
+
+# ─── Routes: IT Assets ────────────────────────────────
+_asset_cache = {}  ← in-memory cache dict {ts, data}
+fetch_assets_raw() ← merge eDevice + Sheets + SQLite (core function)
+/api/assets        ← รายการ asset พร้อม filter
+/api/assets/meta   ← ประเภท + BU list
+/api/assets/employee-map ← employee_id → asset count
+/api/employees/<id>/assets
+/api/assets/transfer-bulk
+/api/assets/<no>/resolution
+/api/assets/export
+/api/dashboard/rental
+/api/sheets/update-info
+
+# ─── eDevice Sync ─────────────────────────────────────
+EDEVICE_JSON, EDEVICE_STATUS_JSON
+_ed_write_status(), _ed_read_status()   ← file-based state
+_edevice_fetch_bg()                     ← background thread function
+_edevice_login()                        ← scrape VIEWSTATE → POST login
+_parse_computer_detail()                ← BS4 → dict (PC)
+_parse_mac_detail()                     ← BS4 → dict (Mac)
+_parse_label_value()                    ← shared table parser
+_clean_serial()                         ← ตัด placeholder serial
+fetch_edevice_assets()                  ← cache หรือ live fetch (parallel)
+/api/sync/edevice/fetch-start   POST   ← เริ่ม background thread
+/api/sync/edevice/fetch-status  GET    ← poll state จากไฟล์
+/api/sync/edevice/preview       GET    ← match stats (ใช้ cache)
+/api/sync/edevice/apply         POST   ← upsert asset_assignments
+
+# ─── Intranet Sync (พนักงาน) ──────────────────────────
+fetch_intranet_employees()
+/api/sync/preview   GET
+/api/sync/apply     POST
+
+init_db()   ← เรียกที่ module level (ไม่ใช่ใน if __name__)
+```
+
+### `init_db()` — ทำไมต้องอยู่ที่ module level
+
+```python
+# ✅ ถูก — อยู่นอก if __name__
+init_db()
+
+if __name__ == '__main__':
+    app.run(debug=True, port=5050)
+```
+
+เมื่อ Gunicorn import `app:app` จะไม่ผ่าน `if __name__ == '__main__'` เลย ถ้า `init_db()` อยู่ในนั้น DB จะไม่มี table → 500 error ทุก request
+
+### Asset Cache
+
+```python
+_asset_cache = {'ts': 0, 'data': None}
+
+# invalidate ทันที (หลัง sync หรือ transfer)
+_asset_cache['ts'] = 0
+
+# auto-reload ถ้า cache หมดอายุ (CACHE_TTL = 1800 วินาที)
+if time.time() - _asset_cache['ts'] > CACHE_TTL:
+    _asset_cache['data'] = fetch_assets_raw()
+    _asset_cache['ts']   = time.time()
+```
+
+⚠️ Cache อยู่ใน memory ของแต่ละ Gunicorn worker — 3 workers = 3 caches แยกกัน  
+กด Sync หรือ transfer จะ invalidate เฉพาะ worker ที่รับ request นั้น  
+Worker อื่นจะ reload เมื่อ cache หมดอายุตามปกติ (ภายใน 30 นาที)
+
+---
+
+## 4. Frontend — `app.js`
 
 ### State หลัก
 
 ```javascript
+// Employees tab
 let currentPage  = 1;
-let filters      = { q, bu, dept, status, hasAsset };
-let buMap        = {};   // bu_code → bu name
+let filters      = {};
+let buMap        = {};        // bu_code → bu name
 
-let assetLoaded  = false;   // lazy load เมื่อเปิด tab
-let assetFilters = { q, customer, type, bu, status, ownership };
-let assetEmpMap  = {};      // { employee_id: count }
+// Assets tab
+let assetLoaded  = false;     // lazy load เมื่อเปิด tab ครั้งแรก
+let allAssets    = [];        // raw asset array จาก API
+let assetFilters = {};
+let assetEmpMap  = {};        // employee_id → asset count
 
-let transferAssets   = [];  // inline asset transfer ใน modal
-let empSearchCache   = [];  // active employees สำหรับ datalist
-let edSyncData       = null;
-let syncData         = null;
+// Modals
+let transferAssets = [];      // asset ที่เลือกสำหรับ transfer
+let edSyncData     = null;    // eDevice preview data
+let syncData       = null;    // Intranet preview data
+let _edPollTimer   = null;    // setTimeout ref สำหรับ eDevice status polling
 ```
 
 ### Pattern: Modal
 
 ```javascript
-// เปิด-ปิดด้วย classList
-element.classList.add('open');
-element.classList.remove('open');
-
-// ทุก modal ต้องมี 3 ฟังก์ชัน
-openXxxModal()
-closeXxxModal()
-closeXxxOnOverlay(e)   // ← e.target === overlay element
-```
-
-### `esc(s)` — บังคับใช้ทุกครั้งที่ interpolate ใน innerHTML
-
-```javascript
-tbody.innerHTML = `<td>${esc(emp.name)}</td>`;  // ✅
-tbody.innerHTML = `<td>${emp.name}</td>`;        // ❌ XSS
+function openXxxModal()        { element.classList.add('open'); ... }
+function closeXxxModal()       { element.classList.remove('open'); ... }
+function closeXxxOnOverlay(e)  { if (e.target === overlay) closeXxxModal(); }
 ```
 
 ### `api(url, method, body)` — wrapper fetch
@@ -99,111 +206,138 @@ tbody.innerHTML = `<td>${emp.name}</td>`;        // ❌ XSS
 ```javascript
 const data = await api('/api/employees');
 await api('/api/employees/1', 'PUT', payload);
+// throw ถ้า HTTP error → ให้ catch ที่ caller
 ```
+
+### `esc(s)` — XSS prevention
+
+```javascript
+// บังคับใช้ทุกครั้งที่ interpolate user data ใน innerHTML
+tbody.innerHTML = `<td>${esc(emp.name)}</td>`;   // ✅
+tbody.innerHTML = `<td>${emp.name}</td>`;         // ❌
+```
+
+### eDevice Polling Pattern
+
+```javascript
+// เปิด modal
+openEdeviceSyncModal()
+  → fetch-status (running? cache_ready?)
+  → ถ้า cache_ready → preview (fast, จาก cache)
+  → ถ้าไม่มี cache → startEdeviceFetch() → เริ่ม poll
+
+// poll loop (ทุก 3 วินาที)
+_pollEdeviceFetch()
+  → fetch-status → อัพเดท progress bar
+  → ถ้า running → setTimeout(_pollEdeviceFetch, 3000)
+  → ถ้า done    → fetch preview → _edShowPreview(data)
+  → ถ้า error   → แสดง error message
+
+// ปิด modal = cancel poll timer
+closeEdeviceSyncModal()
+  → clearTimeout(_edPollTimer)
+```
+
+### Cache-Busting app.js
+
+HTML template (`index.html`) ใช้ Jinja2 variable:
+
+```html
+<script src="/static/js/app.js?v={{ js_version }}"></script>
+```
+
+`js_version` = md5 hash 8 ตัวของไฟล์ คำนวณใน `_js_version()` ใน `app.py`  
+ทุกครั้งที่ `app.js` เปลี่ยน hash จะเปลี่ยน → browser โหลดใหม่อัตโนมัติ
 
 ---
 
-## 4. Data Flow: IT Assets
+## 5. Data Flow: IT Assets
 
-### แหล่งข้อมูลและลำดับ priority
+### แหล่งข้อมูล (3 แหล่ง ลำดับ priority)
 
 ```
-eDevice JSON cache (primary)
-  └── computer_id, serial_no, emp_name, emp_code,
-      device_type → แยกเป็น asset_type + ownership
-      brand, section/department, bu, monthly_rent
+① eDevice JSON cache  (primary — รายการเครื่องทั้งหมด)
+    computer_id, serial_no, emp_name, emp_code,
+    device_type → asset_type + ownership
+    brand, section/department, bu_th, monthly_rent
 
-      │ join ด้วย serial_no.upper()
-      ▼
+        │  join ด้วย serial_no.upper()
+        ▼
 
-Google Sheets CSV (secondary — contract info เท่านั้น)
-  └── asset_no, end_date, start_date, monthly_charge,
-      customer_code, customer_name, PO_no, model, returned
+② Google Sheets CSV  (secondary — ข้อมูลสัญญาเท่านั้น)
+    asset_no, end_date, start_date, monthly_charge,
+    customer_code, customer_name, PO_no, model, returned
 
-      │ + Sheets-only records (S/N ไม่มีใน eDevice)
-      ▼
+        │  + Sheets-only (S/N ไม่มีใน eDevice เลย)
+        ▼
 
-asset_notes (SQLite)   → resolution, resolution_note
-asset_assignments (SQLite) → override employee_id + user_name
+③ SQLite  (override)
+    asset_notes     → resolution, note
+    asset_assignments → employee_id, user_name (ทับ eDevice)
 ```
 
-### `fetch_assets_raw()` — สองรอบ (Pass 1 + Pass 2)
+### `fetch_assets_raw()` — 2 passes
 
-**Pass 1:** loop eDevice ทั้งหมด → join Sheets ถ้า S/N ตรง
-
+**Pass 1:** loop eDevice ทั้งหมด → join Sheets ด้วย S/N
 ```python
 for a in edevice_list:
     sh = sheets_sn_map.get(serial_no.upper())
     results.append(make_record(computer_id, serial_no, a, sh))
 ```
 
-**Pass 2:** Sheets records ที่ S/N ไม่มีใน eDevice เลย → เพิ่มเข้า results ด้วย เพื่อไม่ให้ข้อมูลสัญญาหาย (สำคัญมากสำหรับเครื่องที่หมดสัญญาและถูกถอดออกจาก eDevice แล้ว)
-
+**Pass 2:** Sheets records ที่ S/N ไม่มีใน eDevice → เพิ่มด้วย (อย่าให้หาย)
 ```python
 for sn_upper, sh in sheets_sn_map.items():
     if sn_upper not in ed_sn_set:
         results.append(make_record('', sn, None, sh))
 ```
 
-### `make_record()` — helper สร้าง record
-
-รับ `(computer_id, serial_no, a_ed, sh)` โดย `a_ed` หรือ `sh` เป็น `None` ได้:
-- `a_ed=None` → Sheets-only record (ไม่มีใน eDevice)
-- `sh=None` → eDevice-only record (ไม่มีในสัญญา Sheets) → `contract_status = 'unknown'`
-
-### Cache Invalidation
-
-```python
-_asset_cache['ts'] = 0   # บังคับ reload รอบหน้า
-```
-
-ทุก route ที่แก้ไข `asset_assignments` หรือ `asset_notes` จะ invalidate cache อัตโนมัติ
-
-### Contract Status
-
-| สถานะ | เงื่อนไข |
-|---|---|
-| `returned` | มีข้อมูลในคอลัมน์ Returned ของ Sheets |
-| `expired` | end_date < today |
-| `critical` | เหลือ ≤ 90 วัน |
-| `warning` | เหลือ ≤ 180 วัน |
-| `ok` | เหลือ > 180 วัน |
-| `unknown` | ไม่มี end_date (eDevice-only) |
+Pass 2 สำคัญมากสำหรับเครื่องที่หมดสัญญาและถูกถอดออกจาก eDevice แล้ว
 
 ### Ownership Detection
 
 ```python
-# แยกจาก device_type ของ eDevice เช่น "NoteBook เช่า" → ("NoteBook", "เช่า")
+# 1. ดู device_type จาก eDevice เช่น "NoteBook เช่า" → ownership = "เช่า"
 for kw in ('เช่า', 'ซื้อ'):
     if kw in raw_device_type:
-        ownership = kw
-        device_type_clean = raw_device_type.replace(kw, '').strip()
-        break
+        ownership = kw; break
 
-# computer_id ขึ้นต้น R = เครื่องเช่า (เช่น RNB65001, RPC63001)
+# 2. computer_id ขึ้นต้น R = เครื่องเช่า (R = Rent)
 is_rental = computer_id.upper().startswith('R')
 ```
 
+### asset_no vs computer_id
+
+- `computer_id` = รหัสจาก eDevice เช่น `RNB65001`, `RPC63001`, `1212-0028`
+- `asset_no` = Sheets asset_no ถ้า S/N match, ไม่งั้น fallback เป็น computer_id
+- **สองระบบนี้ไม่ใช่ key เดียวกัน** — ใช้ serial_no เป็นตัวเชื่อมเท่านั้น
+
 ---
 
-## 5. Data Flow: Sync Intranet
+## 6. Data Flow: Sync Intranet (พนักงาน)
 
 ```
-POST http://www.amarin.intra/webappl/Contact/displays_all.asp
-  └── fetch_intranet_employees() — BeautifulSoup, TIS-620
-
-parse BU header (class=fTbHead) → current_bu_code
-parse employee rows (td[width=190]) → name, nickname, dept, position, email, phone
+fetch_intranet_employees()
+  POST http://www.amarin.intra/webappl/Contact/displays_all.asp
+  decode TIS-620
+  BS4 parse:
+    td.class=fTbHead → BU header (regex: "- AMTV" → bu_code)
+    tr → td[width=190] → name/nickname, dept, position, email, phone
 
 /api/sync/preview:
-  to_inactive  = active ใน DB แต่ไม่มีใน Intranet → mark inactive
-  to_add       = มีใน Intranet แต่ไม่มีใน DB → INSERT
+  to_inactive  = active ใน DB แต่ไม่มีใน Intranet
+  to_add       = มีใน Intranet แต่ยังไม่มีใน DB
   to_update:
     structural  = bu/dept/position เปลี่ยน
-    enrich      = email/phone เปลี่ยน
+    enrich      = email/phone/nickname เปลี่ยน
+
+/api/sync/apply:
+  apply to_inactive → UPDATE status='inactive'
+  apply to_add      → INSERT
+  apply to_update   → UPDATE fields
 ```
 
-**Key function:** `_norm(s)` — ใช้ normalize ชื่อก่อน match เสมอ
+**Key:** `_norm(s)` ใช้ normalize ชื่อก่อน match เสมอ
 
 ```python
 def _norm(s):
@@ -212,119 +346,296 @@ def _norm(s):
 
 ---
 
-## 6. Data Flow: eDevice Sync
+## 7. Data Flow: eDevice Sync
+
+### Login Flow
 
 ```
-fetch_edevice_assets(force_live=False)
-  ├── มี edevice_assets.json → _load_edevice_list() (lenient JSON parser)
-  └── ไม่มี / force_live=True → live fetch:
-        _edevice_login()         ← scrape VIEWSTATE → POST login
-        GET Computer1.asp        ← รายการ computer_id ทั้งหมด
-        ThreadPoolExecutor(15)   ← fetch ComputerDetail.asp แบบ parallel
-        _parse_computer_detail() ← BS4 → dict
-        → เขียนทับ edevice_assets.json
+GET  http://amarin.intra/webappl/acorporate/index.aspx?s=out
+     ← scrape __VIEWSTATE, __EVENTVALIDATION (ASP.NET hidden fields)
 
-/api/sync/edevice/preview:
-  match by emp_code → match by name → unmatched
-  code_updates = ชื่อ match แต่ยังไม่มี emp_code ใน DB
+POST same URL + credentials (username=90004)
+     ← ระบบ redirect → session cookie ถูก set
 
-/api/sync/edevice/apply:
-  INSERT/UPDATE asset_assignments (ข้าม record ที่มี manual assignment อยู่แล้ว)
-  UPDATE emp_code เฉพาะที่ยังว่าง
+GET  http://www.amarin.intra/webappl/eDevice_ATV/default.asp?ID_Emp=...
+     ← activate corporate session
 ```
 
-### `_load_edevice_list()` — Lenient JSON Parser
+### Fetch Flow
 
-ไฟล์ `edevice_assets.json` อาจมี encoding เสียจาก TIS-620 scraping ใช้ fallback regex parser:
+```
+GET Computer1.asp    → regex ดึง <OPTION value='...'> → pc_ids[]
+GET Macintosh.asp    → เหมือนกัน                      → mac_ids[]
+
+ThreadPoolExecutor(max_workers=50):
+  fetch ComputerDetail.asp?id={cid}    ← PC
+  fetch MacintoshDetail.asp?id={cid}   ← Mac
+  _parse_computer_detail(text, cid)    ← BS4 → dict
+  _parse_mac_detail(text, cid)
+
+เขียนทับ edevice_assets.json (UTF-8)
+```
+
+### Match Logic (`edevice_preview` / `edevice_apply`)
+
+```
+matched_code:  emp_code ตรงกับ employees.emp_code
+matched_name:  _norm(emp_name) ตรงกับ _norm(employees.name)
+unmatched:     ไม่พบเลย — ต้องตรวจสอบด้วยมือ
+```
 
 ```python
-try:
-    assets = json.load(f)   # ลองปกติก่อน
-except:
-    # parse ทีละ object ด้วย regex
-    for obj in re.findall(r'\{[^{}]+\}', raw, re.DOTALL):
-        try: assets.append(json.loads(obj))
-        except: pass
+# apply: ข้าม asset ที่มี manual assignment อยู่แล้ว
+manual_nos = {r[0] for r in conn.execute('SELECT asset_no FROM asset_assignments')}
+if cid in manual_nos:
+    protected += 1   # ไม่ทับ manual assignment
 ```
 
 ---
 
-## 7. การเพิ่ม Feature ใหม่
+## 8. Background Fetch System
+
+### ปัญหาที่แก้
+
+eDevice มี ~4,757 devices (PC + Mac) การ scrape แบบ sync ใช้เวลา 3-5 นาที ซึ่งเกิน Nginx `proxy_read_timeout 120s` และ Gunicorn `--timeout 300s`
+
+### วิธีแก้: Background Thread + File-Based State
+
+```
+Browser                     Gunicorn Worker A       Gunicorn Worker B/C
+   │                              │                         │
+   ├─ POST /fetch-start ──────────►                         │
+   │                         spawn thread                   │
+   │                         write status.json: running=True│
+   │◄─ {status: "started"} ───────┤                         │
+   │                              │                         │
+   ├─ GET /fetch-status ──────────┼────────────────────────►│
+   │◄─ {running:T, count:350} ────┼──────── read status.json┤
+   │         (3s)                 │                         │
+   ├─ GET /fetch-status ──────────┼────────────────────────►│
+   │         (3s)                 │ thread still running    │
+   │         ...                  │ write status.json: c=650│
+   │                              │                         │
+   │                      thread done                       │
+   │                      write status.json: done=True      │
+   ├─ GET /fetch-status ──────────┼────────────────────────►│
+   │◄─ {done:T, cache_ready:T} ───┤                         │
+   │                              │                         │
+   ├─ GET /preview ───────────────┼────────────────────────►│
+   │◄─ {stats, unmatched...} ─────┼──── read cache file ────┤
+```
+
+### ทำไมต้อง File-Based (ไม่ใช่ Global Variable)
+
+Gunicorn รัน 3 worker processes แยกกัน — แต่ละ worker มี memory ของตัวเอง  
+ถ้าใช้ `global _state = {}` Worker A set `running=True` แต่ Worker B/C ยังเห็น `running=False`
+
+**Solution:** เขียน/อ่านผ่าน `edevice_fetch_status.json` ซึ่งทุก worker เห็นตรงกัน
+
+```python
+def _ed_write_status(state: dict):
+    with open(EDEVICE_STATUS_JSON, 'w', encoding='utf-8') as f:
+        json.dump(state, f)
+
+def _ed_read_status() -> dict:
+    try:
+        with open(EDEVICE_STATUS_JSON, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {'running': False, 'done': False, 'error': None, 'count': 0, 'total': 0}
+```
+
+### Files ที่สร้างอัตโนมัติ
+
+| ไฟล์ | สร้างเมื่อ | ลบได้? |
+|---|---|---|
+| `edevice_assets.json` | หลัง fetch สำเร็จ | ได้ — จะ fetch ใหม่ครั้งหน้า |
+| `edevice_fetch_status.json` | ระหว่าง/หลัง fetch | ได้ — จะสร้างใหม่ |
+
+---
+
+## 9. Production Architecture
+
+### Nginx Config (`deploy/nginx-amarin-employee.conf`)
+
+```nginx
+server {
+    listen 80;
+    client_max_body_size 20M;
+    gzip on;
+
+    location /static/ {
+        alias /opt/amarin-employee/static/;
+        expires 7d;                          # browser cache 7 วัน
+        add_header Cache-Control "public";   # แต่ app.js ใช้ ?v=hash cache-bust
+    }
+
+    location / {
+        proxy_pass         http://127.0.0.1:5100;
+        proxy_read_timeout 120s;             # ⚠️ เพิ่มถ้ามี endpoint ที่ใช้เวลานาน
+    }
+}
+```
+
+### Gunicorn (`deploy/amarin-employee.service`)
+
+```
+--workers  3       # 3 processes
+--timeout  300     # 5 นาที (สำหรับ live eDevice fetch ฉุกเฉิน)
+--preload         # โหลด app ก่อน fork workers (init_db() ทำงานที่นี่)
+```
+
+⚠️ `--preload` + background threads: thread ที่ spawn หลัง fork จะทำงานได้ปกติ  
+แต่ Python GIL อาจทำให้ CPU-bound work ช้าลง (I/O bound เช่น HTTP ไม่มีปัญหา)
+
+### Deployment Pipeline
+
+```bash
+# Developer
+git commit + git push → GitHub
+
+# Server (รัน setup.sh --update)
+git pull                   # จาก GitHub
+pip install -r requirements.txt
+systemctl restart amarin-employee
+
+# Nginx/systemd service file เปลี่ยน → ต้อง copy + reload ด้วยตัวเอง
+sudo cp deploy/amarin-employee.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl restart amarin-employee
+```
+
+`setup.sh --update` ไม่ copy service/nginx file อัตโนมัติ ต้องทำเองถ้าแก้ไข
+
+---
+
+## 10. การเพิ่ม Feature ใหม่
 
 ### เพิ่ม column ในตารางพนักงาน
 
-1. เพิ่มใน `init_db()` (CREATE TABLE + migration block)
-2. เพิ่มใน INSERT/UPDATE routes
-3. เพิ่ม input ใน `index.html` modal และ `saveEmployee()` payload
+1. เพิ่มใน `CREATE TABLE` ใน `init_db()`
+2. เพิ่ม migration block (ตรวจก่อน ALTER TABLE):
+   ```python
+   cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
+   if 'new_col' not in cols:
+       conn.execute("ALTER TABLE employees ADD COLUMN new_col TEXT")
+   ```
+3. เพิ่มใน INSERT/UPDATE routes
+4. เพิ่ม input ใน modal (`index.html`) และ payload (`app.js`)
 
 ### เพิ่ม filter asset ใหม่
 
-**Backend** — `list_assets()`:
+**Backend** — ใน `fetch_assets_raw()` หรือ `/api/assets`:
 ```python
 new_f = request.args.get('new_filter', '')
 if new_f:
     rows = [r for r in rows if r.get('field') == new_f]
 ```
 
-**Frontend** — เพิ่ม state, select element, event listener, URLSearchParams
+**Frontend** — เพิ่ม:
+1. State variable ใน `assetFilters`
+2. `<select>` element ใน filter bar
+3. Event listener → call `renderAssets()`
+4. URLSearchParams ใน `loadAssets()`
 
-### เพิ่ม field ใน asset record
+### เพิ่ม endpoint ใหม่
 
-แก้ `make_record()` ใน `fetch_assets_raw()` เพิ่ม key ใหม่ในทั้ง branch `a_ed` และ `else`
+```python
+@app.route('/api/new-endpoint', methods=['GET'])
+def new_endpoint():
+    conn = get_db()
+    # ... logic
+    conn.close()
+    return jsonify(result)
+```
 
-### เปลี่ยน Google Sheets
+อย่าลืม `conn.close()` เสมอ — SQLite ไม่มี connection pool
 
-แก้ `SHEETS_ID` ใน `app.py` แล้วตรวจ column name:
-- `row.get('Asset number')`, `row.get('Serial Number')`, `row.get('End date')` ฯลฯ
+### เปลี่ยน Google Sheets source
+
+แก้ `SHEETS_ID` ใน `app.py` แล้วตรวจ column name ใน Sheets:
+```python
+row.get('Asset number')    # asset_no
+row.get('Serial Number')   # serial_no
+row.get('End date')        # end_date
+row.get('monthly charge')  # monthly_charge
+```
+Column name case-sensitive — ต้องตรงกับ header ใน Sheets
 
 ---
 
-## 8. Pitfalls และข้อควรระวัง
+## 11. Pitfalls และข้อควรระวัง
 
-### Encoding TIS-620
+### TIS-620 Encoding
 
-Intranet และ eDevice ใช้ TIS-620 — ต้อง decode ก่อนทุกครั้ง:
-
+Intranet และ eDevice ใช้ TIS-620 — ต้อง decode ก่อนเสมอ:
 ```python
 text = resp.content.decode('tis-620', errors='replace')
 ```
 
-อ่านไฟล์ JSON ที่ eDevice เขียนทับ:
+อย่าใช้ `resp.text` โดยตรง (requests จะ guess encoding ผิด)
+
+### edevice_assets.json อาจเสีย
+
+การ scrape อาจถูก interrupt → ไฟล์เสียกลางทาง ใช้ `_load_edevice_list()` ที่มี fallback regex parser:
+```python
+try:
+    assets = json.load(f)
+except:
+    for obj in re.findall(r'\{[^{}]+\}', raw, re.DOTALL):
+        try: assets.append(json.loads(obj))
+        except: pass
+```
+อย่าเปิดไฟล์ตรงๆ ใน code ใหม่ — ใช้ `fetch_edevice_assets()` หรือ `_load_edevice_list()` เสมอ
+
+### ชื่อซ้ำ / Name Collision
+
+`_norm()` match exact string — ถ้ามีพนักงานชื่อซ้ำ match ได้แค่คนแรก  
+แก้ได้โดย fill `emp_code` ให้ครบ (ผ่าน eDevice Sync apply) เพื่อใช้ code match แทน name match
+
+### Gunicorn Multi-Process Cache
+
+3 workers = 3 in-memory caches แยกกัน  
+กด "Sync" จะ invalidate cache เฉพาะ worker ที่รับ request นั้น  
+ใช้ file-based state สำหรับ data ที่ต้องแชร์ข้าม workers (เหมือน edevice_fetch_status.json)
+
+### Nginx proxy_read_timeout = 120s
+
+Endpoint ที่ใช้เวลานาน (> 2 นาที) จะถูก Nginx ตัดก่อน แม้ Gunicorn ยัง process อยู่  
+**แนวทาง:** ใช้ pattern background fetch + polling เหมือน eDevice
+
+### init_db() ต้องอยู่ที่ module level
 
 ```python
-open(EDEVICE_JSON, encoding='utf-8', errors='replace')
+# ✅ ถูก
+init_db()
+if __name__ == '__main__':
+    app.run(...)
+
+# ❌ ผิด — Gunicorn ไม่เรียก init_db() เลย
+if __name__ == '__main__':
+    init_db()
+    app.run(...)
 ```
 
-### eDevice JSON อาจเสีย
-
-`edevice_assets.json` อาจมี record เสียถ้า scraping ดึงข้อมูลไม่สมบูรณ์ — ใช้ `_load_edevice_list()` ที่มี fallback regex เสมอ อย่าเปิดไฟล์ตรง ๆ ใน code ใหม่
-
-### ชื่อซ้ำ / name collision
-
-`_norm()` match แบบ exact string — ถ้ามีพนักงานชื่อซ้ำกัน match ได้คนเดียว แนะนำ fill `emp_code` ให้ครบ (ผ่าน eDevice Sync) เพื่อใช้ code match แทน
-
-### asset_no vs computer_id
-
-- `asset_no` = Sheets asset_no ถ้า S/N match, ไม่งั้น = `computer_id`
-- `computer_id` = รหัสจาก eDevice (`RNB65001`, `RPC63001`, ฯลฯ)
-- สองระบบนี้ **ไม่ใช่ key เดียวกัน** — อย่า join โดยตรง ใช้ S/N เป็นตัวเชื่อมเท่านั้น
-
-### Manual Assignments ห้ามถูกทับ
-
-`edevice_apply()` จะ skip record ที่มีอยู่ใน `asset_assignments` แล้ว:
+### Manual Assignments ห้ามถูก eDevice ทับ
 
 ```python
+# edevice_apply() skip record ที่มี manual assignment อยู่แล้ว
 manual_nos = {r[0] for r in conn.execute('SELECT asset_no FROM asset_assignments')}
 if cid in manual_nos:
-    protected += 1   # ข้าม — ไม่ทับ
+    protected += 1   # skip — ไม่ทับ
 ```
 
-### SQLite Concurrency
+เมื่อ sync eDevice ซ้ำ manual assignment ที่ทำไว้จะไม่ถูกลบทิ้ง
 
-Flask รัน single-threaded (`debug=True`) — ไม่มีปัญหา  
-ถ้า deploy แบบ multi-worker ต้องเพิ่ม connection pool หรือเปลี่ยนเป็น PostgreSQL
+### Browser Cache app.js
 
-### Cache TTL = 30 นาที
+Nginx cache static files 7 วัน — ถ้า deploy `app.js` ใหม่โดยไม่มี cache-bust  
+browser จะใช้ของเก่าต่อไปอีก 7 วัน  
+ระบบนี้แก้ด้วย `?v={{ js_version }}` (md5 hash) ใน template แล้ว — ไม่ต้องแก้อะไรเพิ่ม
 
-`_asset_cache` อยู่ใน memory — restart server = cache หาย โหลดใหม่อัตโนมัติรอบถัดไป  
-force reload ได้ด้วยปุ่ม **Refresh** (ส่ง `?refresh=1`)
+### SQLite WAL Mode
+
+ไม่ได้เปิด WAL mode — ถ้ามี write load สูงขึ้น (หลาย user sync พร้อมกัน) อาจ lock  
+แก้ได้ด้วย `conn.execute("PRAGMA journal_mode=WAL")` ใน `get_db()`
