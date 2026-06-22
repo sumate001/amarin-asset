@@ -205,22 +205,23 @@ fetch_assets_raw()  →  merge กับ SQLite (asset_assignments, asset_notes)
 
 ## Deployment
 
-### ⚡ One-line Install (Linux)
+### ⚡ One-line Deploy (Linux)
 
 ```bash
-# ติดตั้งครั้งแรก
+# ติดตั้งครั้งแรก — ไม่มี database (สร้างใหม่ว่างเปล่า)
+curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash
+
+# ติดตั้งพร้อม database ที่มีอยู่แล้ว
+curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash -s -- --db /path/to/employees.db
+
+# ถ้ามี employees.db อยู่ใน directory ปัจจุบัน — copy อัตโนมัติ
 curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash
 
 # อัพเดทโค้ด (ไม่แตะ database)
 curl -sSL https://raw.githubusercontent.com/sumate001/amarin-asset/main/setup.sh | sudo bash -s -- --update
 ```
 
-> **หมายเหตุ:** หลัง install ถ้ามีไฟล์ `employees.db` อยู่แล้ว ให้ copy เข้าไปด้วย:
-> ```bash
-> sudo cp employees.db /opt/amarin-employee/
-> sudo chown www-data /opt/amarin-employee/employees.db
-> sudo systemctl restart amarin-employee
-> ```
+Script ทำทุกอย่างอัตโนมัติ: **clone repo → venv → dependencies → database → systemd → nginx → print URL**
 
 ---
 
