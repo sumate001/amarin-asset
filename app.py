@@ -1201,23 +1201,34 @@ def export_assets():
 
 # ---------- eDevice Sync ----------
 
-EDEVICE_JSON = os.path.join(os.path.dirname(__file__), 'edevice_assets.json')
+EDEVICE_JSON        = os.path.join(os.path.dirname(__file__), 'edevice_assets.json')
+EDEVICE_STATUS_JSON = os.path.join(os.path.dirname(__file__), 'edevice_fetch_status.json')
 
 import threading as _threading
-_edevice_fetch_state = {'running': False, 'done': False, 'error': None, 'count': 0, 'total': 0}
-_edevice_fetch_lock  = _threading.Lock()
+_edevice_fetch_lock = _threading.Lock()
+
+def _ed_write_status(state: dict):
+    try:
+        with open(EDEVICE_STATUS_JSON, 'w', encoding='utf-8') as f:
+            json.dump(state, f)
+    except Exception:
+        pass
+
+def _ed_read_status() -> dict:
+    try:
+        with open(EDEVICE_STATUS_JSON, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {'running': False, 'done': False, 'error': None, 'count': 0, 'total': 0}
 
 def _edevice_fetch_bg():
-    global _edevice_fetch_state
     try:
         assets = fetch_edevice_assets(force_live=True)
-        with _edevice_fetch_lock:
-            _edevice_fetch_state = {'running': False, 'done': True, 'error': None,
-                                    'count': len(assets), 'total': len(assets)}
+        _ed_write_status({'running': False, 'done': True, 'error': None,
+                          'count': len(assets), 'total': len(assets)})
     except Exception as e:
-        with _edevice_fetch_lock:
-            _edevice_fetch_state = {'running': False, 'done': False, 'error': str(e),
-                                    'count': 0, 'total': 0}
+        _ed_write_status({'running': False, 'done': False, 'error': str(e),
+                          'count': 0, 'total': 0})
 EDEVICE_LOGIN_URL  = 'http://amarin.intra/webappl/acorporate/index.aspx?s=out'
 EDEVICE_CORP_URL   = 'http://www.amarin.intra/webappl/eDevice_ATV/***REMOVED-EDEVICE_INIT_PATH***'
 EDEVICE_DETAIL_URL     = 'http://www.amarin.intra/webappl/eDevice_ATV/ComputerDetail.asp?id={}'
@@ -1487,8 +1498,7 @@ def fetch_edevice_assets(force_live=False):
     mac_ids = get_ids(EDEVICE_MAC_URL)
 
     total_ids = len(pc_ids) + len(mac_ids)
-    with _edevice_fetch_lock:
-        _edevice_fetch_state['total'] = total_ids
+    _ed_write_status({'running': True, 'done': False, 'error': None, 'count': 0, 'total': total_ids})
 
     # map: cid → detail_url (PC และ Mac ใช้ endpoint ต่างกัน)
     cid_url_map = {}
@@ -1519,8 +1529,10 @@ def fetch_edevice_assets(force_live=False):
             r2 = result.result()
             if r2:
                 assets.append(r2)
-                with _edevice_fetch_lock:
-                    _edevice_fetch_state['count'] = len(assets)
+                if len(assets) % 50 == 0:
+                    st = _ed_read_status()
+                    st['count'] = len(assets)
+                    _ed_write_status(st)
 
     with open(EDEVICE_JSON, 'w', encoding='utf-8') as f:
         json.dump(assets, f, ensure_ascii=False, indent=2)
@@ -1559,11 +1571,10 @@ def debug_mac_detail():
 @app.route('/api/sync/edevice/fetch-start', methods=['POST'])
 def edevice_fetch_start():
     """เริ่ม background fetch จาก eDevice (non-blocking)."""
-    global _edevice_fetch_state
-    with _edevice_fetch_lock:
-        if _edevice_fetch_state.get('running'):
-            return jsonify({'status': 'already_running', **_edevice_fetch_state})
-        _edevice_fetch_state = {'running': True, 'done': False, 'error': None, 'count': 0, 'total': 0}
+    st = _ed_read_status()
+    if st.get('running'):
+        return jsonify({'status': 'already_running', **st})
+    _ed_write_status({'running': True, 'done': False, 'error': None, 'count': 0, 'total': 0})
     t = _threading.Thread(target=_edevice_fetch_bg, daemon=True)
     t.start()
     return jsonify({'status': 'started'})
@@ -1572,15 +1583,11 @@ def edevice_fetch_start():
 @app.route('/api/sync/edevice/fetch-status', methods=['GET'])
 def edevice_fetch_status():
     """สถานะ background fetch."""
-    with _edevice_fetch_lock:
-        state = dict(_edevice_fetch_state)
-    cache_ok = False
+    state = _ed_read_status()
     try:
-        if os.path.exists(EDEVICE_JSON) and os.path.getsize(EDEVICE_JSON) > 0:
-            cache_ok = True
+        state['cache_ready'] = os.path.exists(EDEVICE_JSON) and os.path.getsize(EDEVICE_JSON) > 0
     except Exception:
-        pass
-    state['cache_ready'] = cache_ok
+        state['cache_ready'] = False
     return jsonify(state)
 
 
