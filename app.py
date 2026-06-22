@@ -1555,7 +1555,8 @@ def fetch_edevice_assets(force_live=False):
         return None
 
     assets = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as ex:
+    # max_workers=10 — 50 threads ทำให้ GIL อิ่มตัว Gunicorn worker ไม่ได้ CPU → WORKER TIMEOUT → SIGKILL
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
         for result in concurrent.futures.as_completed(
                 {ex.submit(fetch_one, cid): cid for cid in cid_url_map}):
             r2 = result.result()
@@ -1564,6 +1565,7 @@ def fetch_edevice_assets(force_live=False):
                 if len(assets) % 50 == 0:
                     st = _ed_read_status()
                     st['count'] = len(assets)
+                    st['heartbeat'] = time.time()   # ตรวจว่า thread ยังมีชีวิตอยู่
                     _ed_write_status(st)
 
     with open(EDEVICE_JSON, 'w', encoding='utf-8') as f:
@@ -1616,6 +1618,15 @@ def edevice_fetch_start():
 def edevice_fetch_status():
     """สถานะ background fetch."""
     state = _ed_read_status()
+    # ตรวจ heartbeat — ถ้า running=True แต่ไม่มี heartbeat นาน >120s แสดงว่า worker ถูก kill กลางคัน
+    if state.get('running') and not state.get('done'):
+        hb = state.get('heartbeat', 0)
+        if hb and time.time() - hb > 120:
+            state['running'] = False
+            state['error'] = 'Worker ถูก kill กลางคัน (WORKER TIMEOUT) กรุณาลองใหม่'
+            _ed_write_status(state)
+        elif not hb and state.get('count', 0) == 0:
+            pass  # เพิ่งเริ่ม ยังไม่มี heartbeat ครั้งแรก — ปล่อยผ่าน
     try:
         state['cache_ready'] = os.path.exists(EDEVICE_JSON) and os.path.getsize(EDEVICE_JSON) > 0
     except Exception:
