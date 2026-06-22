@@ -1652,10 +1652,15 @@ def fetch_intranet_employees():
     from bs4 import BeautifulSoup
     import socket
     try:
-        resp = req_lib.post(INTRANET_URL, data=INTRANET_PARAMS,
-                            headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                            timeout=30)
+        sess = req_lib.Session()
+        # GET ก่อนเพื่อรับ ASPSESSION cookie
+        sess.get(INTRANET_URL, timeout=15)
+        resp = sess.post(INTRANET_URL, data=INTRANET_PARAMS,
+                         headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                         timeout=30)
         resp.raise_for_status()
+        if len(resp.content) == 0:
+            raise RuntimeError('Intranet ตอบกลับ 200 OK แต่ข้อมูลว่างเปล่า — อาจต้องการ authentication เพิ่มเติม')
     except req_lib.exceptions.ConnectionError as e:
         host = INTRANET_URL.split('/')[2]
         try:
