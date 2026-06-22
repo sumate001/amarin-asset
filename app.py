@@ -1491,7 +1491,7 @@ def fetch_edevice_assets(force_live=False):
         return None
 
     assets = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as ex:
         for result in concurrent.futures.as_completed(
                 {ex.submit(fetch_one, cid): cid for cid in cid_url_map}):
             r2 = result.result()

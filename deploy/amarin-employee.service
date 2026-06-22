@@ -10,7 +10,7 @@ WorkingDirectory=/opt/amarin-employee
 ExecStart=/opt/amarin-employee/venv/bin/gunicorn app:app \
     --bind 127.0.0.1:5100 \
     --workers 3 \
-    --timeout 120 \
+    --timeout 300 \
     --log-level info \
     --access-logfile /var/log/amarin-employee/access.log \
     --error-logfile  /var/log/amarin-employee/error.log \
