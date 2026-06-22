@@ -566,13 +566,13 @@ function renderAssetTable(d) {
   if (onlyResigned)        assets = assets.filter(a => a.user_name && !a.employee_id && !a.is_central);
   if (onlyNoOwner)         assets = assets.filter(a => !a.user_name && !a.is_central);
   if (onlyCentral)         assets = assets.filter(a => a.is_central);
-  if (onlyMissingEdevice)  assets = assets.filter(a => a.ownership_missing_edevice);
+  if (onlyMissingEdevice)  assets = assets.filter(a => a.ownership_missing_edevice && a.contract_status !== 'returned');
 
   // ── อัพเดท summary cards ──────────────────────────────────────────
   // a-total = ยอดรวมทั้งหมดก่อน filter (เพื่อให้ตรงกับ eDevice sync)
   const shown = assets.length;
   const totalAll = d.assets.length;   // รวมทุกเครื่องก่อน filter
-  const missingEdevice = d.assets.filter(a => a.ownership_missing_edevice).length;
+  const missingEdevice = d.assets.filter(a => a.ownership_missing_edevice && a.contract_status !== 'returned').length;
   const inEdevice = totalAll - missingEdevice;
   const monthly = assets.reduce((s, a) => s + (a.monthly_charge || 0), 0);
   const sc = { expired: 0, ed_expire: 0, critical: 0, warning: 0, ok: 0 };
