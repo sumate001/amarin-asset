@@ -1650,9 +1650,26 @@ BU_MAP = {
 
 def fetch_intranet_employees():
     from bs4 import BeautifulSoup
-    resp = req_lib.post(INTRANET_URL, data=INTRANET_PARAMS,
-                        headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                        timeout=30)
+    import socket
+    try:
+        resp = req_lib.post(INTRANET_URL, data=INTRANET_PARAMS,
+                            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                            timeout=30)
+        resp.raise_for_status()
+    except req_lib.exceptions.ConnectionError as e:
+        host = INTRANET_URL.split('/')[2]
+        try:
+            ip = socket.gethostbyname(host)
+            raise RuntimeError(f'เชื่อมต่อ {host} ({ip}) ไม่สำเร็จ — เซิร์ฟเวอร์ปฏิเสธ connection: {e}')
+        except socket.gaierror:
+            raise RuntimeError(
+                f'DNS resolve "{host}" ไม่ได้ — เซิร์ฟเวอร์อาจต้องการ DNS/hosts ของ Intranet\n'
+                f'แก้ด้วย: sudo echo "<IP> {host}" >> /etc/hosts'
+            )
+    except req_lib.exceptions.Timeout:
+        raise RuntimeError(f'Timeout เชื่อมต่อ Intranet ({INTRANET_URL}) — ตรวจสอบ network และ firewall')
+    except req_lib.exceptions.HTTPError as e:
+        raise RuntimeError(f'HTTP Error จาก Intranet: {e}')
     text = resp.content.decode('tis-620', errors='replace')
     soup = BeautifulSoup(text, 'html.parser')
 
@@ -1719,7 +1736,12 @@ SYNC_FIELDS = [
 @app.route('/api/sync/preview', methods=['GET'])
 def sync_preview():
     """Fetch intranet and return full diff (inactive / add / update)."""
-    intranet_employees = fetch_intranet_employees()
+    try:
+        intranet_employees = fetch_intranet_employees()
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return jsonify({'error': f'ไม่สามารถดึงข้อมูลจาก Intranet: {e}'}), 500
     intranet_map = { _norm(e['name']): e for e in intranet_employees }
 
     conn = get_db()
@@ -1795,7 +1817,12 @@ def sync_preview():
 @app.route('/api/sync/apply', methods=['POST'])
 def sync_apply():
     """Apply the sync: inactive / add / update."""
-    intranet_employees = fetch_intranet_employees()
+    try:
+        intranet_employees = fetch_intranet_employees()
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 503
+    except Exception as e:
+        return jsonify({'error': f'ไม่สามารถดึงข้อมูลจาก Intranet: {e}'}), 500
     intranet_map = { _norm(e['name']): e for e in intranet_employees }
 
     conn = get_db()

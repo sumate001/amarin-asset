@@ -1225,8 +1225,13 @@ async function openSyncModal() {
 
     showSyncTab(structural.length ? 'update' : 'inactive');
   } catch(e) {
+    const msg = (e && e.error) ? e.error : (e && e.message) ? e.message : 'เชื่อมต่อ Intranet ไม่ได้';
     document.getElementById('sync-loading').innerHTML =
-      '<div style="text-align:center;padding:40px;color:#dc2626">❌ เชื่อมต่อ Intranet ไม่ได้</div>';
+      `<div style="text-align:center;padding:30px 20px;color:#dc2626">
+        <div style="font-size:1.5rem;margin-bottom:8px">❌</div>
+        <div style="font-weight:700;margin-bottom:6px">เชื่อมต่อ Intranet ไม่สำเร็จ</div>
+        <div style="font-size:.8rem;color:#64748b;white-space:pre-wrap;text-align:left;background:#fff7f7;border:1px solid #fecaca;border-radius:6px;padding:10px 14px;margin-top:8px">${esc(msg)}</div>
+      </div>`;
   }
 }
 
@@ -1851,7 +1856,12 @@ async function api(url, method = 'GET', body) {
   const opts = { method, headers: {} };
   if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
   const res = await fetch(url, opts);
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    let errBody; try { errBody = await res.json(); } catch { errBody = { error: await res.text() }; }
+    const err = new Error(errBody.error || res.statusText);
+    err.error = errBody.error || res.statusText;
+    throw err;
+  }
   return res.json();
 }
 
