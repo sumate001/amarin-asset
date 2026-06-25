@@ -1253,14 +1253,6 @@ def _ed_read_status() -> dict:
     except Exception:
         return {'running': False, 'done': False, 'error': None, 'count': 0, 'total': 0}
 
-def _edevice_fetch_bg():
-    try:
-        assets = fetch_edevice_assets(force_live=True)
-        _ed_write_status({'running': False, 'done': True, 'error': None,
-                          'count': len(assets), 'total': len(assets)})
-    except Exception as e:
-        _ed_write_status({'running': False, 'done': False, 'error': str(e),
-                          'count': 0, 'total': 0})
 EDEVICE_LOGIN_URL  = 'http://amarin.intra/webappl/acorporate/index.aspx?s=out'
 EDEVICE_CORP_URL   = 'http://www.amarin.intra/webappl/eDevice_ATV/***REMOVED-EDEVICE_INIT_PATH***'
 EDEVICE_DETAIL_URL     = 'http://www.amarin.intra/webappl/eDevice_ATV/ComputerDetail.asp?id={}'
@@ -1555,18 +1547,25 @@ def fetch_edevice_assets(force_live=False):
         return None
 
     assets = []
-    # max_workers=10 — 50 threads ทำให้ GIL อิ่มตัว Gunicorn worker ไม่ได้ CPU → WORKER TIMEOUT → SIGKILL
+    _last_hb = time.time()
+    # heartbeat แรกทันทีที่เริ่ม loop — กัน false-positive ช่วง login/get_ids ที่กินเวลานาน
+    _ed_write_status({'running': True, 'done': False, 'error': None,
+                      'count': 0, 'total': total_ids, 'heartbeat': _last_hb})
+    # max_workers=10 — มากกว่านี้ GIL อิ่มตัว แต่ตอนนี้รันใน subprocess แยกแล้ว ไม่กระทบ Gunicorn worker
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
         for result in concurrent.futures.as_completed(
                 {ex.submit(fetch_one, cid): cid for cid in cid_url_map}):
             r2 = result.result()
             if r2:
                 assets.append(r2)
-                if len(assets) % 50 == 0:
-                    st = _ed_read_status()
-                    st['count'] = len(assets)
-                    st['heartbeat'] = time.time()   # ตรวจว่า thread ยังมีชีวิตอยู่
-                    _ed_write_status(st)
+            # heartbeat แบบอิงเวลา (ทุก ~5s) ไม่อิงจำนวน asset — กัน false-positive ตอน network ช้า
+            now = time.time()
+            if now - _last_hb >= 5:
+                _last_hb = now
+                st = _ed_read_status()
+                st['count'] = len(assets)
+                st['heartbeat'] = now   # ยืนยันว่า process ยังมีชีวิตอยู่
+                _ed_write_status(st)
 
     with open(EDEVICE_JSON, 'w', encoding='utf-8') as f:
         json.dump(assets, f, ensure_ascii=False, indent=2)
@@ -1608,9 +1607,16 @@ def edevice_fetch_start():
     st = _ed_read_status()
     if st.get('running'):
         return jsonify({'status': 'already_running', **st})
-    _ed_write_status({'running': True, 'done': False, 'error': None, 'count': 0, 'total': 0})
-    t = _threading.Thread(target=_edevice_fetch_bg, daemon=True)
-    t.start()
+    _ed_write_status({'running': True, 'done': False, 'error': None,
+                      'count': 0, 'total': 0, 'heartbeat': time.time()})
+    # รัน fetch เป็น subprocess แยก — อิสระจาก Gunicorn worker
+    # (worker จะถูก recycle/kill ก็ไม่กระทบ fetch อีกต่อไป)
+    import subprocess, sys as _sys
+    subprocess.Popen(
+        [_sys.executable, os.path.abspath(__file__), '--edevice-fetch'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,   # detach จาก process group ของ Gunicorn
+    )
     return jsonify({'status': 'started'})
 
 
@@ -1994,4 +2000,16 @@ def sync_apply():
 init_db()
 
 if __name__ == '__main__':
+    import sys
+    # subprocess entry point — เรียกจาก /api/sync/edevice/fetch-start
+    if '--edevice-fetch' in sys.argv:
+        try:
+            assets = fetch_edevice_assets(force_live=True)
+            _ed_write_status({'running': False, 'done': True, 'error': None,
+                              'count': len(assets), 'total': len(assets)})
+        except Exception as e:
+            _ed_write_status({'running': False, 'done': False, 'error': str(e),
+                              'count': 0, 'total': 0})
+        sys.exit(0)
+
     app.run(debug=True, port=5050)
