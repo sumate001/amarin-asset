@@ -118,14 +118,14 @@ fetch_assets_raw() ← merge eDevice + Sheets + SQLite (core function)
 # ─── eDevice Sync ─────────────────────────────────────
 EDEVICE_JSON, EDEVICE_STATUS_JSON
 _ed_write_status(), _ed_read_status()   ← file-based state
-_edevice_fetch_bg()                     ← background thread function
+__main__ --edevice-fetch                ← subprocess entry point (รัน fetch แยกจาก Gunicorn)
 _edevice_login()                        ← scrape VIEWSTATE → POST login
 _parse_computer_detail()                ← BS4 → dict (PC)
 _parse_mac_detail()                     ← BS4 → dict (Mac)
 _parse_label_value()                    ← shared table parser
 _clean_serial()                         ← ตัด placeholder serial
 fetch_edevice_assets()                  ← cache หรือ live fetch (parallel)
-/api/sync/edevice/fetch-start   POST   ← เริ่ม background thread
+/api/sync/edevice/fetch-start   POST   ← spawn subprocess (python app.py --edevice-fetch)
 /api/sync/edevice/fetch-status  GET    ← poll state จากไฟล์
 /api/sync/edevice/preview       GET    ← match stats (ใช้ cache)
 /api/sync/edevice/apply         POST   ← upsert asset_assignments
@@ -367,11 +367,12 @@ GET  http://www.amarin.intra/webappl/eDevice_ATV/default.asp?ID_Emp=...
 GET Computer1.asp    → regex ดึง <OPTION value='...'> → pc_ids[]
 GET Macintosh.asp    → เหมือนกัน                      → mac_ids[]
 
-ThreadPoolExecutor(max_workers=50):
+ThreadPoolExecutor(max_workers=10):    ← รันใน subprocess แยก ไม่กระทบ Gunicorn worker
   fetch ComputerDetail.asp?id={cid}    ← PC
   fetch MacintoshDetail.asp?id={cid}   ← Mac
   _parse_computer_detail(text, cid)    ← BS4 → dict
   _parse_mac_detail(text, cid)
+  heartbeat อิงเวลา (~5s) ← กัน false-positive timeout
 
 เขียนทับ edevice_assets.json (UTF-8)
 ```
@@ -399,31 +400,33 @@ if cid in manual_nos:
 
 eDevice มี ~4,757 devices (PC + Mac) การ scrape แบบ sync ใช้เวลา 3-5 นาที ซึ่งเกิน Nginx `proxy_read_timeout 120s` และ Gunicorn `--timeout 300s`
 
-### วิธีแก้: Background Thread + File-Based State
+> **⚠️ บทเรียน (v1.4.1):** เดิม fetch รันใน *daemon thread ในตัว Gunicorn worker* เวลา parse หลายพันหน้า GIL อิ่มตัว worker ตอบ heartbeat ให้ arbiter ไม่ทัน → arbiter `SIGKILL` worker → thread fetch ตายกลางคัน → ขึ้น "WORKER TIMEOUT" ตราบใดที่ fetch อยู่ใน worker มันถูก kill ได้เสมอ จึงต้องย้ายออกเป็น **subprocess แยก**
+
+### วิธีแก้: Detached Subprocess + File-Based State
+
+`fetch-start` ไม่ spawn thread แต่ `subprocess.Popen([sys.executable, app.py, '--edevice-fetch'], start_new_session=True)` — process ใหม่หลุดจาก process group ของ Gunicorn สิ้นเชิง Gunicorn จะ recycle/kill/restart worker ยังไงก็ไม่กระทบ fetch ส่วน status ยังสื่อสารผ่านไฟล์เหมือนเดิม (อ่านได้จากทุก worker)
 
 ```
-Browser                     Gunicorn Worker A       Gunicorn Worker B/C
+Browser                     Gunicorn Worker A       fetch subprocess (แยก)
    │                              │                         │
    ├─ POST /fetch-start ──────────►                         │
-   │                         spawn thread                   │
-   │                         write status.json: running=True│
+   │                       Popen(--edevice-fetch) ─────────►│ (start_new_session)
+   │                       write status.json: running=True  │ login + scrape 4757
    │◄─ {status: "started"} ───────┤                         │
    │                              │                         │
-   ├─ GET /fetch-status ──────────┼────────────────────────►│
-   │◄─ {running:T, count:350} ────┼──────── read status.json┤
-   │         (3s)                 │                         │
-   ├─ GET /fetch-status ──────────┼────────────────────────►│
-   │         (3s)                 │ thread still running    │
-   │         ...                  │ write status.json: c=650│
-   │                              │                         │
-   │                      thread done                       │
-   │                      write status.json: done=True      │
-   ├─ GET /fetch-status ──────────┼────────────────────────►│
-   │◄─ {done:T, cache_ready:T} ───┤                         │
-   │                              │                         │
-   ├─ GET /preview ───────────────┼────────────────────────►│
-   │◄─ {stats, unmatched...} ─────┼──── read cache file ────┤
+   ├─ GET /fetch-status ──────────►  read status.json       │ write c=650, heartbeat
+   │◄─ {running:T, count:650} ────┤◄────────────────────────┤   (อิงเวลา ~5s)
+   │         (3s) ...             │                         │
+   │                              │                  subprocess done
+   │                              │                  write status.json: done=True
+   ├─ GET /fetch-status ──────────►  read status.json       │
+   │◄─ {done:T, cache_ready:T} ───┤                         ✓ exit
+   │                              │
+   ├─ GET /preview ───────────────►  read cache file
+   │◄─ {stats, unmatched...} ─────┤
 ```
+
+> แม้ Gunicorn worker A ถูก kill หลัง spawn แล้ว fetch subprocess ก็รันต่อจนจบ — นี่คือหัวใจของการแก้ WORKER TIMEOUT
 
 ### ทำไมต้อง File-Based (ไม่ใช่ Global Variable)
 
@@ -485,8 +488,7 @@ server {
 --preload         # โหลด app ก่อน fork workers (init_db() ทำงานที่นี่)
 ```
 
-⚠️ `--preload` + background threads: thread ที่ spawn หลัง fork จะทำงานได้ปกติ  
-แต่ Python GIL อาจทำให้ CPU-bound work ช้าลง (I/O bound เช่น HTTP ไม่มีปัญหา)
+⚠️ **อย่ารัน CPU/parsing-heavy งานยาวใน thread ในตัว worker** — GIL อิ่มตัว worker ตอบ arbiter ไม่ทันแล้วถูก `SIGKILL` (timeout) งานแบบนี้ (เช่น eDevice fetch) ให้แยกเป็น **subprocess** ดู §8
 
 ### Deployment Pipeline
 

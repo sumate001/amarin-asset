@@ -2,6 +2,23 @@
 
 ---
 
+## [1.4.1] — 2026-06-25
+
+### Fixed
+- **eDevice sync ขึ้น "Worker ถูก kill กลางคัน (WORKER TIMEOUT)"** — เดิม fetch รันใน daemon thread *ในตัว Gunicorn worker* เวลา parse หลายพันหน้า GIL อิ่มตัว worker ตอบ heartbeat ให้ arbiter ไม่ทัน → arbiter `SIGKILL` worker → thread fetch ตายกลางคัน
+- **heartbeat false-positive** — เดิมอัพเดท heartbeat ทุก 50 เครื่อง ถ้า network ช้าอาจค้าง >120s แล้วถูกตีว่า timeout ทั้งที่ยังทำงานอยู่
+
+### Changed
+- **eDevice fetch รันเป็น subprocess แยกอิสระจาก Gunicorn** — `subprocess.Popen([..., '--edevice-fetch'], start_new_session=True)` แทน background thread → Gunicorn จะ recycle/kill worker ยังไงก็ไม่กระทบ fetch
+- เพิ่ม CLI entry point `python app.py --edevice-fetch` (จุดที่ subprocess เรียก)
+- heartbeat อัพเดทแบบ **อิงเวลา (~5s)** แทนอิงจำนวนเครื่อง
+- ลบฟังก์ชัน `_edevice_fetch_bg()` ที่ไม่ใช้แล้ว
+
+### Added
+- **`deploy.sh` — deploy ด้วยคำสั่งเดียว** — restart Gunicorn ด้วยโค้ดล่าสุด + ติดตั้ง deps + health check (`./deploy.sh` ใช้โค้ดใน working tree, `./deploy.sh --pull` git pull ก่อน)
+
+---
+
 ## [1.4.0] — 2026-06-22
 
 ### Fixed

@@ -2,7 +2,7 @@
 
 ระบบบริหารข้อมูลพนักงานและทรัพย์สิน IT สำหรับกลุ่มบริษัทอมรินทร์
 
-> **Version 1.4.0** · Python Flask + SQLite + Vanilla JS
+> **Version 1.4.1** · Python Flask + SQLite + Vanilla JS
 
 ---
 
@@ -18,7 +18,7 @@
 - แสดงเครื่องทั้งหมดจาก **eDevice** + สัญญาเช่าจาก **Google Sheets**
 - Summary cards 7 ใบ: เครื่องทั้งหมด · ค่าเช่า/เดือน · 🔴 หมดสัญญาเช่า · ⚠️ eDevice Expire · 🟠 หมดใน 90 วัน · 🟡 หมดใน 180 วัน · 🟢 อยู่ในระยะสัญญา
 - กรองตามประเภท, สัญญา (เช่า/ซื้อ), BU, สถานะ, eDevice status, Return, ยังไม่บันทึกใน eDevice
-- **Sync eDevice** — background fetch (ใช้เวลา ~3-5 นาที) พร้อม progress bar แสดง live
+- **Sync eDevice** — background fetch ใน subprocess แยก (ใช้เวลา ~3-5 นาที) พร้อม progress bar แสดง live — ไม่ถูก Gunicorn worker timeout kill
 - Export Excel
 - โอนทรัพย์สินระหว่างพนักงาน / คืน Stock เมื่อพนักงานออก
 - ตรวจจับเครื่อง **"ส่วนกลาง"** จาก eDevice — แสดง badge สีฟ้าแทนชื่อพนักงาน
@@ -58,6 +58,7 @@ amarin-asset/
 ├── setup.sh                    # One-line installer + updater (Linux)
 ├── start.sh                    # Dev server
 ├── start-prod.sh               # Production server (Gunicorn)
+├── deploy.sh                   # Deploy คำสั่งเดียว (restart Gunicorn + deps + health check)
 ├── install.py                  # Universal installer (macOS/Linux/Windows)
 ├── templates/
 │   └── index.html              # Single-page HTML
@@ -103,6 +104,18 @@ python app.py
 ---
 
 ## Deployment (Production)
+
+### 🚀 Deploy คำสั่งเดียว
+
+รัน `deploy.sh` บนเครื่อง server (รัน Gunicorn ตรง ไม่ผ่าน systemd):
+
+```bash
+./deploy.sh           # deploy โค้ดใน working tree ปัจจุบัน (restart Gunicorn + ติดตั้ง deps + health check)
+./deploy.sh --pull    # git pull origin main ก่อน แล้วค่อย deploy
+```
+
+ปรับค่าได้ผ่าน env: `PORT` (5100) · `WORKERS` (2) · `TIMEOUT` (300)
+สำหรับ setup ที่ใช้ **systemd** ให้ใช้ `sudo bash setup.sh --update` แทน (ดูด้านล่าง)
 
 ### Services ที่ติดตั้ง
 

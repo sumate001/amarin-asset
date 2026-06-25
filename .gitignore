@@ -9,5 +9,12 @@ edevice_assets.json
 employees_extracted.json
 amarin_orgchart_full.html
 
+# runtime ที่ deploy.sh / app สร้าง
+gunicorn.pid
+gunicorn-access.log
+gunicorn-error.log
+edevice_fetch_status.json
+.venv/
+
 # Claude session
 .claude/
