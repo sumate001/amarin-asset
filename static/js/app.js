@@ -1782,11 +1782,16 @@ function _pollEdeviceFetch() {
   _edPollTimer = setTimeout(async () => {
     try {
       const s = await api('/api/sync/edevice/fetch-status');
+      const bar = document.getElementById('ed-progress-bar');
       if (s.total > 0) {
+        bar.classList.remove('indeterminate');
         const pct = Math.round(s.count / s.total * 100);
-        document.getElementById('ed-progress-bar').style.width = pct + '%';
+        bar.style.width = pct + '%';
         document.getElementById('ed-progress-text').textContent =
           `${s.count.toLocaleString()} / ${s.total.toLocaleString()} รายการ (${pct}%)`;
+      } else if (s.running) {
+        bar.classList.add('indeterminate');
+        document.getElementById('ed-progress-text').textContent = s.phase || 'กำลังเชื่อมต่อและโหลดรายการ...';
       }
       if (s.running) {
         _pollEdeviceFetch();

@@ -340,6 +340,17 @@
           </div>
           <div id="ed-progress-text" style="font-size:.75rem;margin-top:6px;color:#64748b"></div>
         </div>
+        <style>
+          @keyframes ed-indeterminate {
+            0%   { transform: translateX(-100%); }
+            100% { transform: translateX(400%); }
+          }
+          #ed-progress-bar.indeterminate {
+            width: 25% !important;
+            animation: ed-indeterminate 1.4s ease-in-out infinite;
+            transition: none !important;
+          }
+        </style>
       </div>
       <div id="ed-result" style="display:none">
         <!-- summary cards -->

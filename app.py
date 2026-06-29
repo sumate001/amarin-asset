@@ -1518,7 +1518,14 @@ def fetch_edevice_assets(force_live=False):
         except Exception:
             return []
 
+    _ed_write_status({'running': True, 'done': False, 'error': None,
+                      'count': 0, 'total': 0, 'heartbeat': time.time(),
+                      'phase': 'กำลังโหลดรายการ PC...'})
     pc_ids  = get_ids(EDEVICE_LIST_URL)
+
+    _ed_write_status({'running': True, 'done': False, 'error': None,
+                      'count': 0, 'total': 0, 'heartbeat': time.time(),
+                      'phase': 'กำลังโหลดรายการ Mac...'})
     mac_ids = get_ids(EDEVICE_MAC_URL)
 
     total_ids = len(pc_ids) + len(mac_ids)
@@ -1548,9 +1555,9 @@ def fetch_edevice_assets(force_live=False):
 
     assets = []
     _last_hb = time.time()
-    # heartbeat แรกทันทีที่เริ่ม loop — กัน false-positive ช่วง login/get_ids ที่กินเวลานาน
     _ed_write_status({'running': True, 'done': False, 'error': None,
-                      'count': 0, 'total': total_ids, 'heartbeat': _last_hb})
+                      'count': 0, 'total': total_ids, 'heartbeat': _last_hb,
+                      'phase': 'กำลังดึงข้อมูลรายเครื่อง...'})
     # max_workers=10 — มากกว่านี้ GIL อิ่มตัว แต่ตอนนี้รันใน subprocess แยกแล้ว ไม่กระทบ Gunicorn worker
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
         for result in concurrent.futures.as_completed(
@@ -1558,14 +1565,14 @@ def fetch_edevice_assets(force_live=False):
             r2 = result.result()
             if r2:
                 assets.append(r2)
-            # heartbeat แบบอิงเวลา (ทุก ~5s) ไม่อิงจำนวน asset — กัน false-positive ตอน network ช้า
+            # heartbeat ทุก ~2s — ให้ progress bar ไหลลื่นขึ้น
             now = time.time()
-            if now - _last_hb >= 5:
+            if now - _last_hb >= 2:
                 _last_hb = now
-                st = _ed_read_status()
-                st['count'] = len(assets)
-                st['heartbeat'] = now   # ยืนยันว่า process ยังมีชีวิตอยู่
-                _ed_write_status(st)
+                _ed_write_status({'running': True, 'done': False, 'error': None,
+                                  'count': len(assets), 'total': total_ids,
+                                  'heartbeat': now,
+                                  'phase': 'กำลังดึงข้อมูลรายเครื่อง...'})
 
     with open(EDEVICE_JSON, 'w', encoding='utf-8') as f:
         json.dump(assets, f, ensure_ascii=False, indent=2)
@@ -2007,6 +2014,8 @@ if __name__ == '__main__':
             assets = fetch_edevice_assets(force_live=True)
             _ed_write_status({'running': False, 'done': True, 'error': None,
                               'count': len(assets), 'total': len(assets)})
+            # บอกให้ทุก Gunicorn worker ล้าง in-memory asset cache ทันที
+            _invalidate_asset_cache()
         except Exception as e:
             _ed_write_status({'running': False, 'done': False, 'error': str(e),
                               'count': 0, 'total': 0})
