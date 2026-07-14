@@ -107,7 +107,7 @@ function _anomalyRow(a, opts = {}) {
 // ---- State ----
 let currentPage = 1;
 let totalPages  = 1;
-let filters     = { q: '', bu: '', dept: '', status: '', hasAsset: false };
+let filters     = { q: '', bu: '', dept: '', status: '', hasAsset: false, noAsset: false };
 let buMap       = {};  // bu_code -> bu name
 
 // ---- Asset State ----
@@ -220,9 +220,10 @@ async function loadFilters() {
 
 // ---- Load employees ----
 async function loadEmployees() {
+  const assetFilterOn = filters.hasAsset || filters.noAsset;
   const params = new URLSearchParams({
-    page: filters.hasAsset ? 1 : currentPage,
-    per_page: filters.hasAsset ? 9999 : 50,
+    page: assetFilterOn ? 1 : currentPage,
+    per_page: assetFilterOn ? 9999 : 50,
     q: filters.q, bu: filters.bu,
     dept: filters.dept, status: filters.status
   });
@@ -234,10 +235,10 @@ async function loadEmployees() {
   const info  = document.getElementById('result-info');
 
   document.getElementById('total-badge').textContent = `พนักงาน ${data.total.toLocaleString()} คน`;
-  const showing = filters.hasAsset
-    ? data.employees.filter(e => assetEmpMap[e.id]).length
+  const showing = assetFilterOn
+    ? data.employees.filter(e => filters.hasAsset ? assetEmpMap[e.id] : !assetEmpMap[e.id]).length
     : data.employees.length;
-  const isFiltered = filters.q || filters.bu || filters.dept || filters.status || filters.hasAsset;
+  const isFiltered = filters.q || filters.bu || filters.dept || filters.status || assetFilterOn;
   info.textContent = `แสดง ${showing} จาก ${data.total.toLocaleString()} รายการ` +
     (isFiltered ? ' (กรองแล้ว)' : '');
 
@@ -245,6 +246,8 @@ async function loadEmployees() {
   let employees = data.employees;
   if (filters.hasAsset) {
     employees = employees.filter(e => assetEmpMap[e.id]);
+  } else if (filters.noAsset) {
+    employees = employees.filter(e => !assetEmpMap[e.id]);
   }
 
   if (!employees.length) {
@@ -273,7 +276,7 @@ async function loadEmployees() {
       </tr>
     `).join('');
   }
-  if (filters.hasAsset) {
+  if (assetFilterOn) {
     document.getElementById('pagination').innerHTML = '';
   } else {
     renderPagination(data.total, data.page, data.per_page);
@@ -752,6 +755,26 @@ function onHasAssetChange() {
   const cb = document.getElementById('filter-has-asset');
   filters.hasAsset = cb.checked;
   cb.closest('label').classList.toggle('active', cb.checked);
+  if (cb.checked) {
+    const other = document.getElementById('filter-no-asset');
+    other.checked = false;
+    other.closest('label').classList.remove('active');
+    filters.noAsset = false;
+  }
+  currentPage = 1;
+  loadEmployees();
+}
+
+function onNoAssetChange() {
+  const cb = document.getElementById('filter-no-asset');
+  filters.noAsset = cb.checked;
+  cb.closest('label').classList.toggle('active', cb.checked);
+  if (cb.checked) {
+    const other = document.getElementById('filter-has-asset');
+    other.checked = false;
+    other.closest('label').classList.remove('active');
+    filters.hasAsset = false;
+  }
   currentPage = 1;
   loadEmployees();
 }
