@@ -1184,16 +1184,20 @@ def sheets_update_info():
         if not division:
             division = (r.get('dept_sheet') or '').strip()    # fallback: จาก eDevice dept
 
-        if not name and not dept and not division:
+        # ชีตคอลัมน์ ชื่อ-สกุล เก็บเฉพาะชื่อคนจริง — placeholder ของระบบห้ามเขียนกลับ
+        if name in ('ส่วนกลาง', 'IT Stock'):
+            name = ''
+
+        # ส่งเฉพาะ field ที่มีค่า — ค่าว่างต้องไม่ไปลบข้อมูลเดิมในชีต
+        u = {'serial': sn}
+        if name:     u['name'] = name
+        if dept:     u['dept'] = dept
+        if division: u['division'] = division
+        if len(u) == 1:
             skipped.append(sn)
             continue
 
-        updates.append({
-            'serial':   sn,
-            'name':     name,
-            'dept':     dept,
-            'division': division,
-        })
+        updates.append(u)
 
     if not updates:
         return jsonify({'ok': False, 'error': 'ไม่มีข้อมูลที่จะอัพเดท', 'skipped': len(skipped)})
