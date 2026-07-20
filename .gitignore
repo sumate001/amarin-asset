@@ -18,3 +18,4 @@ edevice_fetch_status.json
 
 # Claude session
 .claude/
+asset_cache_signal.txt
