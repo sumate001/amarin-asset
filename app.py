@@ -103,6 +103,8 @@ def index():
 @app.route('/api/employees', methods=['GET'])
 def list_employees():
     q         = request.args.get('q', '').strip()
+    emp_code  = request.args.get('emp_code', '').strip()
+    email     = request.args.get('email', '').strip()
     bu        = request.args.get('bu', '')
     dept      = request.args.get('dept', '')
     status    = request.args.get('status', '')
@@ -113,6 +115,10 @@ def list_employees():
     if q:
         where.append("(name LIKE ? OR nickname LIKE ? OR position LIKE ? OR department LIKE ?)")
         params += [f'%{q}%'] * 4
+    if emp_code:
+        where.append("UPPER(TRIM(emp_code)) = ?"); params.append(emp_code.upper())
+    if email:
+        where.append("LOWER(TRIM(email)) = ?"); params.append(email.lower())
     if bu:
         where.append("bu_code = ?"); params.append(bu)
     if dept:
@@ -137,6 +143,45 @@ def list_employees():
         'pages': (total + per_page - 1) // per_page,
         'employees': [dict(r) for r in rows]
     })
+
+@app.route('/api/employees/lookup', methods=['GET'])
+def lookup_employee():
+    # exact lookup สำหรับ LINE Helpdesk — ต้องส่ง emp_code หรือ email อย่างใดอย่างหนึ่ง
+    emp_code = request.args.get('emp_code', '').strip()
+    email    = request.args.get('email', '').strip()
+    if bool(emp_code) == bool(email):
+        return jsonify({'found': False, 'error': 'provide exactly one of: emp_code, email'}), 400
+
+    if emp_code:
+        cond, val = "UPPER(TRIM(emp_code)) = ?", emp_code.upper()
+    else:
+        cond, val = "LOWER(TRIM(email)) = ?", email.lower()
+
+    conn = get_db()
+    rows = conn.execute(f'SELECT * FROM employees WHERE {cond} LIMIT 2', (val,)).fetchall()
+    conn.close()
+
+    if not rows:
+        return jsonify({'found': False, 'employee': None})
+    if len(rows) > 1:
+        return jsonify({'found': False, 'error': 'ambiguous'})
+
+    r = dict(rows[0])
+    return jsonify({'found': True, 'employee': {
+        'id': r['id'],
+        'emp_code': r.get('emp_code'),
+        'name': r.get('name'),
+        'nickname': r.get('nickname'),
+        'email': r.get('email'),
+        'phone': r.get('phone'),
+        'position': r.get('position'),
+        'department': r.get('department'),
+        'bu': r.get('bu'),
+        'bu_code': r.get('bu_code'),
+        'status': r.get('status'),
+        'building': r.get('building'),
+        'floor': r.get('floor'),
+    }})
 
 @app.route('/api/employees/<int:eid>', methods=['GET'])
 def get_employee(eid):
