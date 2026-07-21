@@ -1309,6 +1309,14 @@ EDEVICE_MAC_DETAIL_URL = 'http://www.amarin.intra/webappl/eDevice_ATV/MacintoshD
 EDEVICE_LIST_URL       = 'http://www.amarin.intra/webappl/eDevice_ATV/Computer1.asp'
 EDEVICE_MAC_URL        = 'http://www.amarin.intra/webappl/eDevice_ATV/Macintosh.asp'
 
+# eDevice มี 2 ระบบแยกกัน — เครื่องบางส่วน (เช่น APC67xxxx/APC68xxxx) อยู่เฉพาะตัวหลัก
+# ทั้งสองใช้ layout หน้า detail เหมือนกัน → parser เดิมใช้ได้ทั้งคู่
+EDEVICE_BASES = [
+    'http://www.amarin.intra/webappl/eDevice_ATV/',
+    'http://www.amarin.intra/webappl/eDevice/',
+]
+EDEVICE_INIT_PATH = '***REMOVED-EDEVICE_INIT_PATH***'
+
 BU_TH_MAP = {
     'อมรินทร์ทีวี': 'AMTV', 'ออมนิเวิร์ส': 'AOMNI', 'สำนักพิมพ์': 'APUB',
     'อมรินทร์ บุ๊ค': 'ABOOK', 'โรงพิมพ์': 'APRINT', 'ACS': 'ACS',
@@ -1335,7 +1343,12 @@ def _edevice_login():
         'ctl00$ContentPlaceHolder1$loginauth1$txtpass': '12QWaszx@',
         'ctl00$ContentPlaceHolder1$loginauth1$btnlogin': 'เข้าสู่ระบบ',
     }, timeout=15, allow_redirects=True)
-    sess.get(EDEVICE_CORP_URL, timeout=15)
+    # init session ของแต่ละระบบ eDevice (ไม่ init จะได้หน้าเปล่า ~1.2KB)
+    for base in EDEVICE_BASES:
+        try:
+            sess.get(base + EDEVICE_INIT_PATH, timeout=15)
+        except Exception:
+            pass
     return dict(sess.cookies)
 
 
@@ -1567,26 +1580,27 @@ def fetch_edevice_assets(force_live=False):
         except Exception:
             return []
 
-    _ed_write_status({'running': True, 'done': False, 'error': None,
-                      'count': 0, 'total': 0, 'heartbeat': time.time(),
-                      'phase': 'กำลังโหลดรายการ PC...'})
-    pc_ids  = get_ids(EDEVICE_LIST_URL)
-
-    _ed_write_status({'running': True, 'done': False, 'error': None,
-                      'count': 0, 'total': 0, 'heartbeat': time.time(),
-                      'phase': 'กำลังโหลดรายการ Mac...'})
-    mac_ids = get_ids(EDEVICE_MAC_URL)
-
-    total_ids = len(pc_ids) + len(mac_ids)
-    _ed_write_status({'running': True, 'done': False, 'error': None, 'count': 0, 'total': total_ids})
-
     # map: cid → detail_url (PC และ Mac ใช้ endpoint ต่างกัน)
+    # วนทุกระบบใน EDEVICE_BASES — เจอ cid ซ้ำให้ระบบแรกใน list ชนะ
     cid_url_map = {}
-    for cid in pc_ids:
-        cid_url_map[cid] = EDEVICE_DETAIL_URL.format(cid)
-    for cid in mac_ids:
-        # Mac ใช้ MacintoshDetail.asp (ไม่ทับกับ PC)
-        cid_url_map[cid] = EDEVICE_MAC_DETAIL_URL.format(cid)
+    mac_cids    = set()
+    for base in EDEVICE_BASES:
+        _ed_write_status({'running': True, 'done': False, 'error': None,
+                          'count': 0, 'total': 0, 'heartbeat': time.time(),
+                          'phase': f'กำลังโหลดรายการ PC ({base.rstrip("/").split("/")[-1]})...'})
+        for cid in get_ids(base + 'Computer1.asp'):
+            cid_url_map.setdefault(cid, base + 'ComputerDetail.asp?id=' + cid)
+
+        _ed_write_status({'running': True, 'done': False, 'error': None,
+                          'count': 0, 'total': 0, 'heartbeat': time.time(),
+                          'phase': f'กำลังโหลดรายการ Mac ({base.rstrip("/").split("/")[-1]})...'})
+        for cid in get_ids(base + 'Macintosh.asp'):
+            if cid not in cid_url_map:
+                cid_url_map[cid] = base + 'MacintoshDetail.asp?id=' + cid
+                mac_cids.add(cid)
+
+    total_ids = len(cid_url_map)
+    _ed_write_status({'running': True, 'done': False, 'error': None, 'count': 0, 'total': total_ids})
 
     def fetch_one(cid):
         try:
@@ -1594,7 +1608,7 @@ def fetch_edevice_assets(force_live=False):
             r2   = req_lib.get(url, cookies=cookies, timeout=12)
             if r2.status_code == 200 and len(r2.content) > 3000:
                 text = r2.content.decode('tis-620', errors='replace')
-                if cid in mac_ids:
+                if cid in mac_cids:
                     rec = _parse_mac_detail(text, cid)
                 else:
                     rec = _parse_computer_detail(text, cid)
