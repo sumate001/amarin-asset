@@ -1284,6 +1284,8 @@ def export_assets():
 
 EDEVICE_JSON        = os.path.join(os.path.dirname(__file__), 'edevice_assets.json')
 EDEVICE_STATUS_JSON = os.path.join(os.path.dirname(__file__), 'edevice_fetch_status.json')
+# สรุปเครื่องที่ fetch ไม่สำเร็จในรอบล่าสุด (เพื่อ debug — ดูผ่าน /api/sync/edevice/skipped)
+EDEVICE_SKIPPED_JSON = os.path.join(os.path.dirname(__file__), 'edevice_fetch_skipped.json')
 
 import threading as _threading
 _edevice_fetch_lock = _threading.Lock()
@@ -1603,31 +1605,46 @@ def fetch_edevice_assets(force_live=False):
     _ed_write_status({'running': True, 'done': False, 'error': None, 'count': 0, 'total': total_ids})
 
     def fetch_one(cid):
+        """คืน (record, skip_reason) — skip_reason=None แปลว่าสำเร็จ"""
+        url = cid_url_map[cid]
         try:
-            url  = cid_url_map[cid]
-            r2   = req_lib.get(url, cookies=cookies, timeout=12)
-            if r2.status_code == 200 and len(r2.content) > 3000:
-                text = r2.content.decode('tis-620', errors='replace')
-                if cid in mac_cids:
-                    rec = _parse_mac_detail(text, cid)
-                else:
-                    rec = _parse_computer_detail(text, cid)
-                return rec
-        except: pass
-        return None
+            r2 = req_lib.get(url, cookies=cookies, timeout=12)
+        except Exception as e:
+            return None, f'request_error:{type(e).__name__}'
+        if r2.status_code != 200:
+            return None, f'http_{r2.status_code}'
+        if len(r2.content) <= 3000:
+            return None, 'empty_page'   # หน้าเปล่า/redirect — มักแปลว่า session หมดอายุ
+        try:
+            text = r2.content.decode('tis-620', errors='replace')
+            if cid in mac_cids:
+                rec = _parse_mac_detail(text, cid)
+            else:
+                rec = _parse_computer_detail(text, cid)
+        except Exception as e:
+            return None, f'parse_error:{type(e).__name__}'
+        return rec, None
 
     assets = []
+    # skipped: reason → { count, cids (เก็บตัวอย่างไม่เกิน 20) }
+    skipped = {}
     _last_hb = time.time()
     _ed_write_status({'running': True, 'done': False, 'error': None,
                       'count': 0, 'total': total_ids, 'heartbeat': _last_hb,
                       'phase': 'กำลังดึงข้อมูลรายเครื่อง...'})
     # max_workers=10 — มากกว่านี้ GIL อิ่มตัว แต่ตอนนี้รันใน subprocess แยกแล้ว ไม่กระทบ Gunicorn worker
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
-        for result in concurrent.futures.as_completed(
-                {ex.submit(fetch_one, cid): cid for cid in cid_url_map}):
-            r2 = result.result()
-            if r2:
-                assets.append(r2)
+        fut_map = {ex.submit(fetch_one, cid): cid for cid in cid_url_map}
+        for fut in concurrent.futures.as_completed(fut_map):
+            rec, reason = fut.result()
+            if rec:
+                assets.append(rec)
+            else:
+                # aggregate ใน thread หลัก (as_completed) — ไม่ต้องใช้ lock
+                s = skipped.setdefault(reason, {'count': 0, 'cids': []})
+                s['count'] += 1
+                if len(s['cids']) < 20:
+                    s['cids'].append(fut_map[fut])
             # heartbeat ทุก ~2s — ให้ progress bar ไหลลื่นขึ้น
             now = time.time()
             if now - _last_hb >= 2:
@@ -1639,6 +1656,19 @@ def fetch_edevice_assets(force_live=False):
 
     with open(EDEVICE_JSON, 'w', encoding='utf-8') as f:
         json.dump(assets, f, ensure_ascii=False, indent=2)
+
+    skipped_summary = {
+        'fetched_at':  datetime.now().isoformat(timespec='seconds'),
+        'total_ids':   total_ids,
+        'ok':          len(assets),
+        'skipped':     total_ids - len(assets),
+        'by_reason':   dict(sorted(skipped.items(), key=lambda kv: -kv[1]['count'])),
+    }
+    try:
+        with open(EDEVICE_SKIPPED_JSON, 'w', encoding='utf-8') as f:
+            json.dump(skipped_summary, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
     return assets
 
 
@@ -1669,6 +1699,16 @@ def debug_mac_detail():
         return jsonify({'cid': cid, 'url': url, 'rows': rows_out})
     except Exception as e:
         return jsonify({'error': str(e)})
+
+
+@app.route('/api/sync/edevice/skipped', methods=['GET'])
+def edevice_skipped():
+    """สรุปเครื่องที่ fetch ไม่สำเร็จในรอบล่าสุด (แยกตามสาเหตุ)"""
+    try:
+        with open(EDEVICE_SKIPPED_JSON, encoding='utf-8') as f:
+            return jsonify(json.load(f))
+    except Exception:
+        return jsonify({'error': 'ยังไม่มีข้อมูล — ต้อง fetch อย่างน้อย 1 รอบก่อน'}), 404
 
 
 @app.route('/api/sync/edevice/fetch-start', methods=['POST'])
