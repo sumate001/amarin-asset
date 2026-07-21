@@ -1354,19 +1354,31 @@ def _edevice_login():
     return dict(sess.cookies)
 
 
+def _norm_label(s):
+    """normalize label ก่อนเทียบ — eDevice แต่ละระบบเขียน label ไม่เหมือนกัน
+    เช่น 'Serial No.*:' (ATV) vs 'Serial No. :' (ตัวหลัก) → 'serialno.:' ทั้งคู่"""
+    return re.sub(r'[\s *]+', '', s or '').lower()
+
+
 def _parse_label_value(soup, label_map):
     """Helper: วน <tr> แล้ว match label → value จาก adjacent <td> cells"""
-    all_labels = set(label_map.keys())
+    norm_map   = [(_norm_label(lbl), key) for lbl, key in label_map.items()]
+    all_labels = {_norm_label(lbl) for lbl in label_map}
     data = {}
     for row in soup.find_all('tr'):
         cells = [td.get_text(strip=True).replace('\xa0', ' ') for td in row.find_all('td')]
         for i in range(len(cells) - 1):
             val = cells[i + 1].strip()
-            if not val or val.endswith(':') or val in all_labels:
+            if not val or val.endswith(':') or _norm_label(val) in all_labels:
                 continue
-            for lbl, key in label_map.items():
-                if lbl in cells[i] and key not in data:
-                    data[key] = val
+            lbl_norm = _norm_label(cells[i])
+            for lbl, key in norm_map:
+                if lbl not in lbl_norm or key in data:
+                    continue
+                # กัน 'ทรัพย์สินฝ่าย*:' (dept_asset) ไปติด key 'ฝ่าย :' (section)
+                if 'ทรัพย์สิน' in lbl_norm and 'ทรัพย์สิน' not in lbl:
+                    continue
+                data[key] = val
     return data
 
 
@@ -1483,7 +1495,7 @@ def _parse_mac_detail(text, cid):
         if len(tds) < 2:
             continue
         for i, td in enumerate(tds[:-1]):
-            label = td.get_text(strip=True).replace('\xa0', ' ')
+            label  = _norm_label(td.get_text(strip=True))
             val_td = tds[i + 1]
 
             # ── ประเภท / ประเภท*: — device_type + ownership ──
@@ -1509,14 +1521,14 @@ def _parse_mac_detail(text, cid):
 
             # ── select fields ทั่วไป ──
             for lbl, key in select_label_map.items():
-                if lbl in label and key not in data:
+                if _norm_label(lbl) in label and key not in data:
                     values = _get_cell_value(val_td)
                     if values:
                         data[key] = values[0]
 
             # ── text fields ทั่วไป ──
             for lbl, key in label_map.items():
-                if lbl in label and key not in data:
+                if _norm_label(lbl) in label and key not in data:
                     values = _get_cell_value(val_td)
                     if values:
                         # เลือกค่าที่ไม่ใช่ label ตัวเอง
