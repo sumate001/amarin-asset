@@ -708,23 +708,23 @@ def fetch_assets_raw(force=False):
     return results
 
 
-@app.route('/api/assets', methods=['GET'])
-def list_assets():
-    force       = request.args.get('refresh') == '1'
-    status_f    = request.args.get('status', '')
-    type_f      = request.args.get('type', '')
-    position_f  = request.args.get('position', '')
-    dept_f      = request.args.get('dept', '')
-    customer_f  = request.args.get('customer', '')
-    bu_f        = request.args.get('bu', '')
-    ownership_f = request.args.get('ownership', '')
-    machine_f   = request.args.get('machine_type', '')
-    q           = request.args.get('q', '').strip().lower()
+def _apply_asset_filters(rows, args):
+    """กรอง asset ตาม query params — ใช้ร่วมกันระหว่าง /api/assets และ report PDF
+    เพื่อให้รายงานได้ข้อมูลชุดเดียวกับที่แสดงบนหน้าจอเป๊ะ ๆ
 
-    data = fetch_assets_raw(force)
-
-    # ส่ง returned ด้วย — ให้ frontend เป็นคนตัดสินใจซ่อน/แสดง (checkbox "ซ่อน Return")
-    rows = list(data)
+    รวมทั้ง filter ฝั่ง server (dropdown) และ filter ที่เดิมทำฝั่ง client
+    (checkbox กรองพิเศษ + eDevice status)
+    """
+    status_f    = args.get('status', '')
+    type_f      = args.get('type', '')
+    position_f  = args.get('position', '')
+    dept_f      = args.get('dept', '')
+    customer_f  = args.get('customer', '')
+    bu_f        = args.get('bu', '')
+    ownership_f = args.get('ownership', '')
+    machine_f   = args.get('machine_type', '')
+    ed_status_f = args.get('ed_status', '').strip().lower()
+    q           = args.get('q', '').strip().lower()
 
     if status_f:
         rows = [r for r in rows if r['contract_status'] == status_f]
@@ -748,6 +748,17 @@ def list_assets():
             rows = [r for r in rows if not (r.get('machine_type') or '').strip()]
         else:
             rows = [r for r in rows if (r.get('machine_type') or '').strip() == machine_f]
+    if ed_status_f:
+        rows = [r for r in rows if (r.get('edevice_status') or '').lower() == ed_status_f]
+    # ── checkbox "กรองพิเศษ" (เดิมทำฝั่ง client) ──────────────────
+    if args.get('only_resigned') == '1':
+        rows = [r for r in rows if r['user_name'] and not r.get('employee_id') and not r.get('is_central')]
+    if args.get('only_no_owner') == '1':
+        rows = [r for r in rows if not r['user_name'] and not r.get('is_central')]
+    if args.get('only_central') == '1':
+        rows = [r for r in rows if r.get('is_central')]
+    if args.get('only_missing_edevice') == '1':
+        rows = [r for r in rows if r.get('ownership_missing_edevice') and r['contract_status'] != 'returned']
     if q:
         rows = [r for r in rows if
                 q in r['user_name'].lower() or
@@ -755,6 +766,16 @@ def list_assets():
                 q in r['serial_no'].lower() or
                 q in r['asset_no'].lower() or
                 q in r['computer_id'].lower()]
+    return rows
+
+
+@app.route('/api/assets', methods=['GET'])
+def list_assets():
+    force = request.args.get('refresh') == '1'
+    data  = fetch_assets_raw(force)
+
+    # ส่ง returned ด้วย — ให้ frontend เป็นคนตัดสินใจซ่อน/แสดง (checkbox "ซ่อน Return")
+    rows = _apply_asset_filters(list(data), request.args)
 
     rows.sort(key=lambda r: (r['days_remaining'] is None, r['days_remaining'] or 0))
 
@@ -1292,6 +1313,48 @@ def export_assets():
     wb.save(buf); buf.seek(0)
     fname = f"it_assets_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
+
+
+
+@app.route('/api/assets/report.pdf', methods=['GET'])
+def asset_report_pdf():
+    """รายงาน PDF — ประเภทเครื่อง × ตำแหน่งงาน ตาม filter ที่หน้าจอเลือกไว้"""
+    from report_pdf import build_asset_report
+
+    rows = _apply_asset_filters(list(fetch_assets_raw()), request.args)
+
+    # สรุป filter ที่ใช้ ไปแสดงหัวรายงาน ให้รู้ว่าตัวเลขมาจากชุดข้อมูลไหน
+    _ST = {'expired': 'หมดสัญญาแล้ว', 'critical': 'เหลือ < 90 วัน',
+           'warning': 'เหลือ < 180 วัน', 'ok': 'อยู่ในระยะสัญญา', 'returned': 'คืนแล้ว'}
+    a = request.args
+    labels = []
+    for key, prefix, mapper in [
+        ('q',            'ค้นหา',          lambda v: '"%s"' % v),
+        ('bu',           'BU',             str),
+        ('type',         'ประเภท',         str),
+        ('ownership',    'ประเภทสัญญา',    str),
+        ('machine_type', 'ประเภทเครื่อง',  lambda v: 'ยังไม่ระบุ' if v == '-' else v),
+        ('status',       'สถานะสัญญา',     lambda v: _ST.get(v, v)),
+        ('ed_status',    'eDevice status', str),
+        ('position',     'ตำแหน่ง',        str),
+        ('dept',         'แผนก',           str),
+    ]:
+        v = (a.get(key) or '').strip()
+        if v:
+            labels.append('%s: %s' % (prefix, mapper(v)))
+    for key, text in [
+        ('only_resigned',        'เฉพาะไม่พบใน HR'),
+        ('only_no_owner',        'เฉพาะไม่มีผู้ถือครอง'),
+        ('only_central',         'เฉพาะส่วนกลาง'),
+        ('only_missing_edevice', 'เฉพาะยังไม่บันทึกใน eDevice'),
+    ]:
+        if a.get(key) == '1':
+            labels.append(text)
+
+    buf = build_asset_report(rows, labels)
+    fname = f"report_asset_by_position_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    return send_file(buf, mimetype='application/pdf',
                      as_attachment=True, download_name=fname)
 
 

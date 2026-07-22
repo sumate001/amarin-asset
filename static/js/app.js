@@ -1201,6 +1201,37 @@ function filterAssetEdExpire() {
   document.getElementById('tab-assets').scrollIntoView({ behavior: 'smooth' });
 }
 
+// ออกรายงาน PDF ตาม filter ปัจจุบันทั้งหมด — รวม filter ฝั่ง client (checkbox/eDevice status)
+// เพื่อให้ตัวเลขในรายงานตรงกับที่เห็นบนหน้าจอ
+function exportAssetReport(btn) {
+  const params = new URLSearchParams({
+    q:            assetFilters.q,
+    type:         assetFilters.type,
+    bu:           assetFilters.bu,
+    status:       assetFilters.status,
+    ownership:    assetFilters.ownership,
+    machine_type: assetFilters.machine_type,
+    position:     assetFilters.position,
+    dept:         assetFilters.dept,
+    ed_status:    document.getElementById('a-filter-ed-status')?.value || '',
+  });
+  [['a-filter-resigned',        'only_resigned'],
+   ['a-filter-no-owner',        'only_no_owner'],
+   ['a-filter-central',         'only_central'],
+   ['a-filter-missing-edevice', 'only_missing_edevice']
+  ].forEach(([id, key]) => {
+    if (document.getElementById(id)?.checked) params.set(key, '1');
+  });
+
+  // รายงานใช้เวลาสร้างสักครู่ — บอกสถานะบนปุ่มไว้ก่อน
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '<span style="font-size:.75rem">⏳ กำลังสร้าง...</span>';
+    setTimeout(() => { btn.innerHTML = orig; }, 4000);
+  }
+  window.location = '/api/assets/report.pdf?' + params;
+}
+
 function exportAssets() {
   const params = new URLSearchParams({
     status:   assetFilters.status,
