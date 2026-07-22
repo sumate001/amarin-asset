@@ -541,6 +541,7 @@ def fetch_assets_raw(force=False):
                         break
                 device_type_clean = _DEVICE_NORM.get(device_type_clean.lower(), device_type_clean)
             brand      = (a_ed.get('brand') or '').strip()
+            machine_type = (a_ed.get('machine_type') or '').strip()
             # dept จาก eDevice (ฝ่าย/แผนก ที่บันทึกใน eDevice โดยตรง)
             ed_dept    = (a_ed.get('section') or a_ed.get('department') or '').strip()
             user_name  = ed_emp_name
@@ -568,6 +569,7 @@ def fetch_assets_raw(force=False):
             _DEVICE_NORM = {'desktop,pc': 'Desktop', 'desktop': 'Desktop', 'notebook': 'Notebook'}
             device_type_clean = _DEVICE_NORM.get(_sh_dt.lower(), _sh_dt)
             ownership  = 'เช่า'   # Sheets-only = เครื่องเช่าทั้งหมด
+            machine_type = ''
             brand      = (sh.get('Brand') or '').strip() if sh else ''
             ed_dept    = (sh.get('Department') or sh.get('แผนก') or '').strip() if sh else ''
             user_name  = (sh.get('ชื่อ-สกุล') or '').strip() if sh else ''
@@ -619,6 +621,7 @@ def fetch_assets_raw(force=False):
             'is_rental':       is_rental,
             'serial_no':       serial_no,
             'asset_type':      device_type_clean,
+            'machine_type':    machine_type,
             'ownership':       ownership,
             'brand':           brand,
             'model':           (sh.get('Model') or '').strip() if sh else brand,
@@ -715,6 +718,7 @@ def list_assets():
     customer_f  = request.args.get('customer', '')
     bu_f        = request.args.get('bu', '')
     ownership_f = request.args.get('ownership', '')
+    machine_f   = request.args.get('machine_type', '')
     q           = request.args.get('q', '').strip().lower()
 
     data = fetch_assets_raw(force)
@@ -738,6 +742,12 @@ def list_assets():
         rows = [r for r in rows if r['emp_bu_code'] == bu_f]
     if ownership_f:
         rows = [r for r in rows if r.get('ownership') == ownership_f]
+    if machine_f:
+        # '-' = เครื่องที่ eDevice ยังไม่ระบุประเภทเครื่อง
+        if machine_f == '-':
+            rows = [r for r in rows if not (r.get('machine_type') or '').strip()]
+        else:
+            rows = [r for r in rows if (r.get('machine_type') or '').strip() == machine_f]
     if q:
         rows = [r for r in rows if
                 q in r['user_name'].lower() or
@@ -1131,6 +1141,7 @@ def asset_meta():
     }
     customers = {}
     types     = set()
+    machines  = set()
     positions = set()
     depts     = set()
     for r in active:
@@ -1138,6 +1149,9 @@ def asset_meta():
         t = r['asset_type']
         if t:
             types.add(_TYPE_NORM.get(t.lower(), t))
+        m = (r.get('machine_type') or '').strip()
+        if m:
+            machines.add(m)
         p = r.get('emp_position', '')
         if p:
             positions.add(p)
@@ -1147,6 +1161,7 @@ def asset_meta():
     return jsonify({
         'customers':  [{'code': k, 'name': v} for k, v in customers.items()],
         'types':      sorted(types),
+        'machine_types': sorted(machines),
         'positions':  sorted(positions),
         'depts':      sorted(depts),
     })
@@ -1406,6 +1421,25 @@ def _parse_computer_detail(text, cid):
     data.update(_parse_label_value(soup, label_map))
     data['bu_code'] = bu_th_to_code(data.get('bu_th', ''))
     _clean_serial(data)
+    # ── ประเภทเครื่อง (dropdown ตัวที่ 2) เช่น 'NB สำนักงานทั่วไป' ────
+    # หน้า ComputerDetail มี label 'ประเภท*:' 2 จุด:
+    #   จุดแรก = device_type + ownership ('NoteBook  เช่า')
+    #   จุดที่สอง = ประเภทเครื่องตาม spec (ค่า '-' ถ้ายังไม่ระบุ)
+    for row in soup.find_all('tr'):
+        tds = row.find_all('td')
+        for i in range(len(tds) - 1):
+            if 'ประเภท' not in tds[i].get_text(strip=True):
+                continue
+            val = tds[i + 1].get_text(' ', strip=True).replace('\xa0', ' ').strip()
+            val = re.sub(r'\s+', ' ', val)
+            if not val or val == '-' or 'เช่า' in val or 'ซื้อ' in val:
+                continue
+            if val == re.sub(r'\s+', ' ', (data.get('device_type') or '').strip()):
+                continue   # ค่าซ้ำกับ device_type (เครื่องที่ไม่ระบุ เช่า/ซื้อ)
+            data['machine_type'] = val
+            break
+        if 'machine_type' in data:
+            break
     # ── Radio button: ทรัพย์สินของ*: (ส่วนบุคคล / ส่วนกลาง) ─────────
     for row in soup.find_all('tr'):
         tds = row.find_all('td')

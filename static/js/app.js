@@ -112,7 +112,7 @@ let buMap       = {};  // bu_code -> bu name
 
 // ---- Asset State ----
 let assetLoaded = false;
-let assetFilters = { q: '', type: '', bu: '', status: '', ownership: '', position: '', dept: '' };
+let assetFilters = { q: '', type: '', bu: '', status: '', ownership: '', machine_type: '', position: '', dept: '' };
 let _assetRawData = null;   // cache ผลดิบจาก API สำหรับ toggle hide-return
 
 // ---- Transfer State ----
@@ -459,6 +459,11 @@ async function loadAssetMeta() {
   const typeSel = document.getElementById('a-filter-type');
   d.types.forEach(t => typeSel.insertAdjacentHTML('beforeend', `<option value="${t}">${t}</option>`));
 
+  // populate ประเภทเครื่อง filter (จาก dropdown 'ประเภท' ใน eDevice)
+  const machineSel = document.getElementById('a-filter-machine');
+  (d.machine_types || []).forEach(m => machineSel.insertAdjacentHTML('beforeend', `<option value="${esc(m)}">${esc(m)}</option>`));
+  machineSel.insertAdjacentHTML('beforeend', `<option value="-">— ไม่ระบุ —</option>`);
+
   // populate position filter
   const posSel = document.getElementById('a-filter-position');
   (d.positions || []).forEach(p => posSel.insertAdjacentHTML('beforeend', `<option value="${esc(p)}">${esc(p)}</option>`));
@@ -474,7 +479,7 @@ async function loadAssetMeta() {
   });
 
   // wire up filter events (fetch ใหม่เมื่อ filter เปลี่ยน)
-  ['a-search', 'a-filter-type', 'a-filter-bu', 'a-filter-status', 'a-filter-ownership', 'a-filter-position', 'a-filter-dept'].forEach(id => {
+  ['a-search', 'a-filter-type', 'a-filter-bu', 'a-filter-status', 'a-filter-ownership', 'a-filter-machine', 'a-filter-position', 'a-filter-dept'].forEach(id => {
     const el = document.getElementById(id);
     const evt = el.tagName === 'INPUT' ? 'input' : 'change';
     el.addEventListener(evt, () => {
@@ -483,6 +488,7 @@ async function loadAssetMeta() {
       assetFilters.bu        = document.getElementById('a-filter-bu').value;
       assetFilters.status    = document.getElementById('a-filter-status').value;
       assetFilters.ownership = document.getElementById('a-filter-ownership').value;
+      assetFilters.machine_type = document.getElementById('a-filter-machine').value;
       assetFilters.position  = document.getElementById('a-filter-position').value;
       assetFilters.dept      = document.getElementById('a-filter-dept').value;
       loadAssets();
@@ -530,6 +536,7 @@ async function loadAssets(refresh = false) {
     bu:        assetFilters.bu,
     status:    assetFilters.status,
     ownership: assetFilters.ownership,
+    machine_type: assetFilters.machine_type,
     position:  assetFilters.position,
     dept:      assetFilters.dept,
   });
@@ -607,6 +614,7 @@ function renderAssetTable(d) {
   if (assetFilters.bu)       filterTagCfg.push({ label: `BU: ${assetFilters.bu}`,    clear: () => { document.getElementById('a-filter-bu').value=''; assetFilters.bu=''; } });
   if (assetFilters.type)     filterTagCfg.push({ label: `ประเภท: ${assetFilters.type}`, clear: () => { document.getElementById('a-filter-type').value=''; assetFilters.type=''; } });
   if (assetFilters.ownership)filterTagCfg.push({ label: `สัญญา: ${assetFilters.ownership}`, clear: () => { document.getElementById('a-filter-ownership').value=''; assetFilters.ownership=''; } });
+  if (assetFilters.machine_type) filterTagCfg.push({ label: `ประเภทเครื่อง: ${assetFilters.machine_type === '-' ? 'ไม่ระบุ' : assetFilters.machine_type}`, clear: () => { document.getElementById('a-filter-machine').value=''; assetFilters.machine_type=''; } });
   if (assetFilters.status)   filterTagCfg.push({ label: `สถานะ: ${assetFilters.status}`, clear: () => { document.getElementById('a-filter-status').value=''; assetFilters.status=''; } });
   if (edStatusF)             filterTagCfg.push({ label: `eDevice: ${edStatusF}`,    clear: () => { document.getElementById('a-filter-ed-status').value=''; } });
   if (assetFilters.position) filterTagCfg.push({ label: `ตำแหน่ง: ${assetFilters.position}`, clear: () => { document.getElementById('a-filter-position').value=''; assetFilters.position=''; } });
@@ -729,6 +737,7 @@ function renderAssetTable(d) {
       <td style="text-align:center">${
         ownershipBadge(a)
       }</td>
+      <td style="${C};font-size:.75rem;color:#475569" title="${esc(a.machine_type)}">${esc(a.machine_type) || '<span style="color:#cbd5e1">—</span>'}</td>
       <td style="${C};font-size:.8rem" title="${esc(a.model)}">${esc(a.model)}</td>
       <td style="${C};font-size:.82rem" title="${esc(a.user_name)}">
         ${a.is_central
@@ -820,6 +829,7 @@ async function showAssetDetail(empId, empName) {
       ['แหล่งข้อมูล',   _srcBadge(a)],
       ['ประเภท',         esc(a.asset_type)||'—'],
       ['ประเภทสัญญา',   ownershipBadge(a)],
+      ['ประเภทเครื่อง', esc(a.machine_type)||'—'],
       ['ยี่ห้อ / รุ่น',  `${esc(a.brand)||''} ${esc(a.model)||''}`.trim() || '—'],
       ['ผู้ถือครอง',     a.is_central
           ? '<span class="badge-central">🏢 ส่วนกลาง</span>'
@@ -1154,7 +1164,7 @@ async function saveResolution() {
 
 function resetAssetFilters() {
   // ล้าง dropdowns
-  ['a-search','a-filter-bu','a-filter-type','a-filter-ownership',
+  ['a-search','a-filter-bu','a-filter-type','a-filter-ownership','a-filter-machine',
    'a-filter-status','a-filter-ed-status','a-filter-position','a-filter-dept'
   ].forEach(id => {
     const el = document.getElementById(id);
@@ -1166,7 +1176,7 @@ function resetAssetFilters() {
     if (el) el.checked = false;
   });
   // reset state
-  assetFilters = { q: '', type: '', bu: '', status: '', ownership: '', position: '', dept: '' };
+  assetFilters = { q: '', type: '', bu: '', status: '', ownership: '', machine_type: '', position: '', dept: '' };
   loadAssets();
 }
 

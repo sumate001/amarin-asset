@@ -163,6 +163,7 @@
         <option value="ซื้อ">ซื้อ</option>
         <option value="⚠">⚠ ไม่ตรงกัน</option>
       </select>
+      <select id="a-filter-machine"><option value="">ทุกประเภทเครื่อง</option></select>
       <select id="a-filter-status">
         <option value="">ทุกสถานะสัญญา</option>
         <option value="expired">🔴 หมดแล้ว</option>
@@ -241,7 +242,7 @@
 
   <!-- Table -->
   <div class="table-wrap">
-    <table id="asset-table" style="table-layout:fixed;width:100%">
+    <table id="asset-table" style="table-layout:fixed;width:100%;min-width:1660px">
       <colgroup>
         <col style="width:36px">    <!-- # -->
         <col style="width:90px">    <!-- Asset No. -->
@@ -250,6 +251,7 @@
         <col style="width:110px">   <!-- แหล่งข้อมูล -->
         <col style="width:80px">    <!-- ประเภท -->
         <col style="width:90px">    <!-- ประเภทสัญญา -->
+        <col style="width:110px">   <!-- ประเภทเครื่อง -->
         <col style="width:150px">   <!-- รุ่น -->
         <col style="width:120px">   <!-- ผู้ถือครอง -->
         <col style="width:130px">   <!-- ตำแหน่ง -->
@@ -269,6 +271,7 @@
           <th style="text-align:center">แหล่งข้อมูล</th>
           <th>ประเภท</th>
           <th>ประเภทสัญญา</th>
+          <th>ประเภทเครื่อง</th>
           <th>รุ่น</th>
           <th>ผู้ถือครอง</th>
           <th>ตำแหน่ง</th>
