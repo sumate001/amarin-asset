@@ -1,4 +1,4 @@
-"""สร้างรายงาน PDF การใช้งานเครื่อง IT — เน้นความสัมพันธ์ ประเภทเครื่อง × ตำแหน่งงาน
+"""สร้างรายงาน PDF การใช้งานเครื่อง IT — ประเภทเครื่อง × ตำแหน่งงาน (หน้าเดียว)
 
 ใช้ฟอนต์ Sarabun (OFL) ที่ bundle มาใน static/fonts เพราะเครื่อง server
 ไม่มีฟอนต์ไทยติดตั้งไว้ — ถ้าไม่ embed ตัวอักษรไทยจะกลายเป็นสี่เหลี่ยม
@@ -15,22 +15,28 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (BaseDocTemplate, Frame, KeepTogether, PageBreak,
-                                PageTemplate, Paragraph, Spacer, Table, TableStyle)
+from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
+                                Spacer, Table, TableStyle)
 
 FONT_DIR = os.path.join(os.path.dirname(__file__), 'static', 'fonts')
 FONT     = 'Sarabun'
 FONT_B   = 'Sarabun-Bold'
 
-# ── palette (ล้อสีกับหน้าเว็บ) ─────────────────────────────────────
-NAVY    = colors.HexColor('#1E3A5F')
-BLUE    = colors.HexColor('#2563eb')
+# ── palette ────────────────────────────────────────────────────────
+# categorical slots ตามลำดับตายตัว (ห้ามวนซ้ำ) — ผ่านเกณฑ์ CVD/contrast
+# สำหรับคู่สีที่อยู่ติดกันบนพื้นสว่าง ซึ่งตรงกับการใช้งานที่นี่
+# (หัวคอลัมน์เรียงติดกัน) และทุกช่องมี label กำกับเสมอ
+CAT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4',
+       '#008300', '#4a3aa7', '#e34948']
+NEUTRAL = '#94a3b8'          # ใช้กับ "(ยังไม่ระบุ)" — เป็นความว่าง ไม่ใช่ identity
+
+INK     = colors.HexColor('#0f172a')
 SLATE   = colors.HexColor('#475569')
 MUTED   = colors.HexColor('#94a3b8')
-LINE    = colors.HexColor('#e2e8f0')
-BG_ALT  = colors.HexColor('#f8fafc')
-BG_HEAD = colors.HexColor('#eff6ff')
-GREEN   = colors.HexColor('#15803d')
+LINE    = colors.HexColor('#dbe3ec')
+WHITE   = colors.white
+BRAND   = colors.HexColor('#2a78d6')
+GREEN   = colors.HexColor('#008300')
 AMBER   = colors.HexColor('#b45309')
 
 _fonts_ready = False
@@ -46,16 +52,21 @@ def _ensure_fonts():
     _fonts_ready = True
 
 
-def _style(name, size, color=colors.black, bold=False, align=TA_LEFT, leading=None, space=0):
+def _tint(hex_color, alpha):
+    """ผสมสีกับพื้นขาว — ได้เฉดอ่อนของ hue เดิม (sequential ramp หนึ่ง hue)"""
+    c = colors.HexColor(hex_color)
+    return colors.Color(1 - (1 - c.red) * alpha,
+                        1 - (1 - c.green) * alpha,
+                        1 - (1 - c.blue) * alpha)
+
+
+def _style(name, size, color=INK, bold=False, align=TA_LEFT, leading=None):
     return ParagraphStyle(name, fontName=FONT_B if bold else FONT, fontSize=size,
-                          textColor=color, alignment=align,
-                          leading=leading or size * 1.35, spaceAfter=space)
+                          textColor=color, alignment=align, leading=leading or size * 1.3)
 
 
 UNSPEC_MACHINE  = '(ยังไม่ระบุ)'
 UNSPEC_POSITION = '(ไม่ระบุตำแหน่ง)'
-MAX_POSITIONS   = 28    # แถวในตารางไขว้ — เกินกว่านี้ยุบเป็น 'อื่น ๆ'
-MAX_DETAIL_ROWS = 400   # กันไฟล์บวมเมื่อ filter กว้าง
 
 
 def _machine_of(r):
@@ -77,305 +88,258 @@ def _fmt_baht(n):
 # ══════════════════════════════════════════════════════════════════
 
 def _draw_frame(canvas, doc):
+    doc._pages = max(getattr(doc, '_pages', 0), doc.page)
     canvas.saveState()
     w, h = landscape(A4)
 
-    # แถบหัวกระดาษ
-    canvas.setFillColor(NAVY)
-    canvas.rect(0, h - 17 * mm, w, 17 * mm, stroke=0, fill=1)
-    canvas.setFillColor(colors.white)
+    canvas.setFillColor(BRAND)
+    canvas.rect(0, h - 15 * mm, w, 15 * mm, stroke=0, fill=1)
+    canvas.setFillColor(WHITE)
     canvas.setFont(FONT_B, 12)
-    canvas.drawString(12 * mm, h - 11 * mm, 'รายงานการใช้งานเครื่อง IT — ประเภทเครื่อง × ตำแหน่งงาน')
-    canvas.setFont(FONT, 8.5)
-    canvas.drawRightString(w - 12 * mm, h - 11 * mm, 'Amarin Employee Database')
+    canvas.drawString(11 * mm, h - 10 * mm,
+                      'รายงานการใช้งานเครื่อง IT — ประเภทเครื่อง × ตำแหน่งงาน')
+    canvas.setFont(FONT, 8)
+    canvas.drawRightString(w - 11 * mm, h - 10 * mm, 'Amarin Employee Database')
 
-    # เส้นคั่นท้ายกระดาษ + เลขหน้า
-    canvas.setStrokeColor(LINE)
-    canvas.setLineWidth(0.6)
-    canvas.line(12 * mm, 12 * mm, w - 12 * mm, 12 * mm)
     canvas.setFillColor(MUTED)
-    canvas.setFont(FONT, 7.5)
-    canvas.drawString(12 * mm, 8 * mm,
-                      'ออกรายงานเมื่อ ' + doc._generated_at)
-    canvas.drawRightString(w - 12 * mm, 8 * mm, 'หน้า %d' % doc.page)
+    canvas.setFont(FONT, 7)
+    canvas.drawString(11 * mm, 7 * mm, 'ออกรายงานเมื่อ ' + doc._generated_at)
+    canvas.drawRightString(w - 11 * mm, 7 * mm, 'หน้า %d' % doc.page)
     canvas.restoreState()
 
 
 def _doc(buf, generated_at):
-    w, h = landscape(A4)
     doc = BaseDocTemplate(buf, pagesize=landscape(A4),
-                          leftMargin=12 * mm, rightMargin=12 * mm,
-                          topMargin=22 * mm, bottomMargin=16 * mm,
+                          leftMargin=11 * mm, rightMargin=11 * mm,
+                          topMargin=19 * mm, bottomMargin=11 * mm,
                           title='รายงานการใช้งานเครื่อง IT',
                           author='Amarin Employee Database')
     doc._generated_at = generated_at
-    frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id='main')
-    doc.addPageTemplates([PageTemplate(id='all', frames=[frame], onPage=_draw_frame)])
+    doc.addPageTemplates([PageTemplate(
+        id='all',
+        frames=[Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id='m')],
+        onPage=_draw_frame)])
     return doc
 
 
-def _section(title, note=None):
-    out = [Spacer(1, 5 * mm),
-           Paragraph(title, _style('h2', 11.5, NAVY, bold=True))]
-    if note:
-        out.append(Paragraph(note, _style('note', 8, MUTED, space=1)))
-    out.append(Spacer(1, 2 * mm))
-    return out
+def _heading(num, title, note):
+    return Table(
+        [[Paragraph('%s %s' % (num, title), _style('h', 10.5, INK, bold=True)),
+          Paragraph(note, _style('hn', 7.2, MUTED, align=TA_CENTER))]],
+        colWidths=[None, None], hAlign='LEFT', style=TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
+            ('LEFTPADDING', (0, 0), (0, 0), 0),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+            ('LINEBELOW', (0, 0), (-1, -1), 1.2, BRAND),
+        ]))
 
 
 # ══════════════════════════════════════════════════════════════════
 #  main
 # ══════════════════════════════════════════════════════════════════
 
-def build_asset_report(rows, filter_labels):
-    """rows = asset dict ที่ผ่าน filter แล้ว, filter_labels = list ข้อความ filter ที่ใช้"""
-    _ensure_fonts()
-    generated_at = datetime.now().strftime('%d/%m/%Y %H:%M น.')
-    buf = io.BytesIO()
-    doc = _doc(buf, generated_at)
-    W   = doc.width
-    story = []
-
-    # ── ตัวกรองที่ใช้ ────────────────────────────────────────────
-    story.append(Paragraph(
-        'ตัวกรองที่ใช้: ' + (' &nbsp;·&nbsp; '.join(filter_labels) if filter_labels
-                             else 'ไม่มี (แสดงข้อมูลทั้งหมด)'),
-        _style('flt', 8.5, SLATE)))
-    story.append(Spacer(1, 4 * mm))
-
-    # ── KPI ─────────────────────────────────────────────────────
+def _story(rows, filter_labels, W, max_pos):
     total    = len(rows)
     monthly  = sum(r.get('monthly_charge') or 0 for r in rows)
     machines = Counter(_machine_of(r) for r in rows)
     spec_cnt = total - machines.get(UNSPEC_MACHINE, 0)
-    positions = {_position_of(r) for r in rows}
-    pct = (spec_cnt / total * 100) if total else 0
+    n_pos    = len({_position_of(r) for r in rows})
+    pct      = (spec_cnt / total * 100) if total else 0
 
-    kpis = [
-        ('เครื่องทั้งหมด',        '{:,}'.format(total),                  NAVY),
-        ('ค่าเช่ารวม / เดือน',    _fmt_baht(monthly),                    BLUE),
-        ('ระบุประเภทเครื่องแล้ว', '{:,} ({:.1f}%)'.format(spec_cnt, pct),
-                                   GREEN if pct >= 50 else AMBER),
-        ('ประเภทเครื่องที่พบ',    '{:,}'.format(len([m for m in machines if m != UNSPEC_MACHINE]))
-                                   + ' ประเภท',                          NAVY),
-        ('ตำแหน่งงานที่เกี่ยวข้อง', '{:,}'.format(len(positions)) + ' ตำแหน่ง', NAVY),
-    ]
-    kpi_tbl = Table(
-        [[Paragraph(lbl, _style('kl', 8, SLATE, align=TA_CENTER)) for lbl, _, _ in kpis],
-         [Paragraph(val, _style('kv', 15, col, bold=True, align=TA_CENTER)) for _, val, col in kpis]],
-        colWidths=[W / len(kpis)] * len(kpis))
-    kpi_tbl.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), BG_ALT),
-        ('BOX',        (0, 0), (-1, -1), 0.6, LINE),
-        ('INNERGRID',  (0, 0), (-1, -1), 0.6, colors.white),
-        ('VALIGN',     (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, 0), 6), ('BOTTOMPADDING', (0, 1), (-1, 1), 7),
-    ]))
-    story.append(kpi_tbl)
+    story = [Paragraph(
+        'ตัวกรอง: ' + (' · '.join(filter_labels) if filter_labels else 'ไม่มี (ข้อมูลทั้งหมด)'),
+        _style('flt', 8, SLATE)), Spacer(1, 2.5 * mm)]
+
+    # ── KPI ──────────────────────────────────────────────────────
+    kpis = [('เครื่องทั้งหมด', '{:,}'.format(total), CAT[0]),
+            ('ค่าเช่ารวม / เดือน', _fmt_baht(monthly), CAT[2]),
+            ('ระบุประเภทเครื่องแล้ว', '{:,} ({:.1f}%)'.format(spec_cnt, pct),
+             CAT[1] if pct < 50 else CAT[5]),
+            ('ประเภทเครื่องที่พบ',
+             '{:,} ประเภท'.format(len([m for m in machines if m != UNSPEC_MACHINE])), CAT[6]),
+            ('ตำแหน่งงานที่เกี่ยวข้อง', '{:,} ตำแหน่ง'.format(n_pos), CAT[4])]
+    kpi = Table([[Paragraph(l, _style('kl', 7.5, SLATE, align=TA_CENTER)) for l, _, _ in kpis],
+                 [Paragraph(v, _style('kv', 14, colors.HexColor(c), bold=True, align=TA_CENTER))
+                  for _, v, c in kpis]],
+                colWidths=[W / len(kpis)] * len(kpis))
+    kpi_style = [('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                 ('TOPPADDING', (0, 0), (-1, 0), 4),
+                 ('BOTTOMPADDING', (0, 1), (-1, 1), 5),
+                 ('INNERGRID', (0, 0), (-1, -1), 2, WHITE)]
+    for i, (_, _, c) in enumerate(kpis):
+        kpi_style += [('BACKGROUND', (i, 0), (i, -1), _tint(c, .10)),
+                      ('LINEABOVE', (i, 0), (i, 0), 2.2, colors.HexColor(c))]
+    kpi.setStyle(TableStyle(kpi_style))
+    story.append(kpi)
 
     if not total:
-        story += _section('ไม่พบข้อมูล')
-        story.append(Paragraph('ไม่มีเครื่องที่ตรงกับตัวกรองที่เลือกไว้', _style('e', 10, SLATE)))
-        doc.build(story)
-        buf.seek(0)
-        return buf
+        story += [Spacer(1, 6 * mm),
+                  Paragraph('ไม่มีเครื่องที่ตรงกับตัวกรองที่เลือกไว้', _style('e', 10, SLATE))]
+        return story
 
-    # ══ 1. ตารางไขว้ ประเภทเครื่อง × ตำแหน่งงาน ═══════════════════
-    # คอลัมน์ = ประเภทเครื่อง (ที่ระบุแล้วก่อน, ยังไม่ระบุไว้ท้ายสุด)
+    # ── 1. ตารางไขว้ ─────────────────────────────────────────────
     cols = sorted([m for m in machines if m != UNSPEC_MACHINE],
                   key=lambda m: (-machines[m], m))
+    hue = {m: CAT[i % len(CAT)] for i, m in enumerate(cols)}
     if UNSPEC_MACHINE in machines:
         cols.append(UNSPEC_MACHINE)
+        hue[UNSPEC_MACHINE] = NEUTRAL
 
     grid = defaultdict(Counter)
     for r in rows:
         grid[_position_of(r)][_machine_of(r)] += 1
 
-    # เรียงตามจำนวนเครื่องที่ "ระบุประเภทแล้ว" ก่อน — ไม่งั้นแถวที่มีข้อมูลจริง
-    # จะจมอยู่ใต้ตำแหน่งที่มีเครื่องเยอะแต่ยังไม่ได้กรอกประเภทเลย
-    def _spec(p):
+    def spec(p):
         return sum(n for m, n in grid[p].items() if m != UNSPEC_MACHINE)
 
-    xt_order  = sorted(grid, key=lambda p: (-_spec(p), -sum(grid[p].values()), p))
-    pos_order = sorted(grid, key=lambda p: (-sum(grid[p].values()), p))
-    shown_pos, rest = xt_order[:MAX_POSITIONS], xt_order[MAX_POSITIONS:]
+    # แสดงเฉพาะตำแหน่งที่มีเครื่องระบุประเภทแล้ว — ตำแหน่งที่ยังไม่กรอกเลย
+    # ไม่ได้ตอบคำถามของรายงานนี้ ยุบรวมเป็นแถวเดียวไว้ท้ายตาราง
+    ranked = sorted([p for p in grid if spec(p)],
+                    key=lambda p: (-spec(p), -sum(grid[p].values()), p))
+    shown, rest = ranked[:max_pos], ranked[max_pos:] + [p for p in grid if not spec(p)]
 
-    hdr_st  = _style('th', 7.2, colors.white, bold=True, align=TA_CENTER, leading=8.6)
-    pos_st  = _style('tp', 7.6, colors.black, leading=9.2)
-    num_st  = _style('tn', 8, colors.black, align=TA_CENTER)
-    zero_st = _style('tz', 8, colors.HexColor('#cbd5e1'), align=TA_CENTER)
-    tot_st  = _style('tt', 8, NAVY, bold=True, align=TA_CENTER)
+    hdr = _style('th', 6.8, WHITE, bold=True, align=TA_CENTER, leading=8)
+    hdr_d = _style('thd', 6.8, SLATE, bold=True, align=TA_CENTER, leading=8)
+    hdr_sm = _style('ths', 6.1, WHITE, bold=True, align=TA_CENTER, leading=7.2)
+    pos_s = _style('tp', 7.2, INK, leading=8.6)
+    zero  = _style('tz', 7.5, colors.HexColor('#cbd5e1'), align=TA_CENTER)
 
-    def cell(n, style=None):
-        return Paragraph('{:,}'.format(n) if n else '·', style or (num_st if n else zero_st))
+    head = [Paragraph('ตำแหน่งงาน', hdr_d)] + \
+           [Paragraph(c, (hdr if c != UNSPEC_MACHINE else hdr_d) if len(c) <= 26
+                      else (hdr_sm if c != UNSPEC_MACHINE else hdr_d)) for c in cols] + \
+           [Paragraph('รวม', hdr_d)]
 
-    head = [Paragraph('ตำแหน่งงาน', hdr_st)] + \
-           [Paragraph(c, hdr_st) for c in cols] + \
-           [Paragraph('รวม', hdr_st)]
-    body = []
-    for p in shown_pos:
+    col_max = {m: max([grid[p].get(m, 0) for p in shown] or [0]) or 1 for m in cols}
+    body, tints = [], []
+    for ri, p in enumerate(shown, 1):
         c = grid[p]
-        body.append([Paragraph(p, pos_st)] + [cell(c.get(m, 0)) for m in cols] +
-                    [cell(sum(c.values()), tot_st)])
+        line = [Paragraph(p, pos_s)]
+        for ci, m in enumerate(cols, 1):
+            n = c.get(m, 0)
+            if n:
+                line.append(Paragraph('{:,}'.format(n),
+                                      _style('n', 7.8, INK, bold=True, align=TA_CENTER)))
+                if m != UNSPEC_MACHINE:
+                    # sequential ramp ภายในคอลัมน์ — hue เดียว เข้มตามจำนวน
+                    tints.append((ci, ri, _tint(hue[m], .12 + .38 * n / col_max[m])))
+            else:
+                line.append(Paragraph('·', zero))
+        line.append(Paragraph('{:,}'.format(sum(c.values())),
+                              _style('n', 7.8, BRAND, bold=True, align=TA_CENTER)))
+        body.append(line)
+
     if rest:
         agg = Counter()
         for p in rest:
             agg.update(grid[p])
         body.append([Paragraph('อื่น ๆ อีก {:,} ตำแหน่ง'.format(len(rest)),
-                               _style('to', 7.6, SLATE))] +
-                    [cell(agg.get(m, 0)) for m in cols] + [cell(sum(agg.values()), tot_st)])
-    foot = [Paragraph('รวมทั้งสิ้น', _style('tf', 8, NAVY, bold=True))] + \
-           [cell(machines.get(m, 0), tot_st) for m in cols] + [cell(total, tot_st)]
+                               _style('to', 7, MUTED))] +
+                    [Paragraph('{:,}'.format(agg.get(m, 0)) if agg.get(m, 0) else '·',
+                               _style('n', 7.5, SLATE, align=TA_CENTER) if agg.get(m, 0) else zero)
+                     for m in cols] +
+                    [Paragraph('{:,}'.format(sum(agg.values())),
+                               _style('n', 7.5, SLATE, align=TA_CENTER))])
+    foot = [Paragraph('รวมทั้งสิ้น', _style('tf', 7.8, INK, bold=True))] + \
+           [Paragraph('{:,}'.format(machines.get(m, 0)),
+                      _style('n', 7.8, INK, bold=True, align=TA_CENTER)) for m in cols] + \
+           [Paragraph('{:,}'.format(total), _style('n', 7.8, BRAND, bold=True, align=TA_CENTER))]
 
-    pos_w  = 62 * mm
-    each_w = (W - pos_w - 20 * mm) / max(len(cols), 1)
+    # จำกัดความกว้างคอลัมน์ประเภทเครื่อง — ถ้ามีไม่กี่ประเภท ปล่อยให้ยืดเต็มหน้า
+    # จะดูโหว่ ให้คอลัมน์ตำแหน่งงานดูดพื้นที่ที่เหลือแทน
+    tot_w  = 15 * mm
+    each_w = min((W - 55 * mm - tot_w) / len(cols), 42 * mm)
+    pos_w  = W - tot_w - each_w * len(cols)
     xt = Table([head] + body + [foot],
-               colWidths=[pos_w] + [each_w] * len(cols) + [20 * mm],
+               colWidths=[pos_w] + [each_w] * len(cols) + [tot_w],
                repeatRows=1)
-    xt.setStyle(TableStyle([
-        ('BACKGROUND',    (0, 0), (-1, 0), NAVY),
-        ('BACKGROUND',    (0, -1), (-1, -1), BG_HEAD),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, BG_ALT]),
-        ('GRID',          (0, 0), (-1, -1), 0.4, LINE),
-        ('BOX',           (0, 0), (-1, -1), 0.7, NAVY),
-        ('LINEABOVE',     (0, -1), (-1, -1), 0.9, NAVY),
-        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING',    (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('LEFTPADDING',   (0, 0), (-1, -1), 4),
-        ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
-    ]))
-    story += _section('1. ตารางไขว้ — ตำแหน่งงาน × ประเภทเครื่อง',
-                      'เรียงตามจำนวนเครื่องที่ระบุประเภทแล้วมากไปน้อย · '
-                      'เครื่องหมาย · คือไม่มีเครื่องในช่องนั้น')
-    story.append(xt)
+    xs = [('GRID', (0, 0), (-1, -1), 0.4, LINE),
+          ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+          ('TOPPADDING', (0, 0), (-1, -1), 2.2),
+          ('BOTTOMPADDING', (0, 0), (-1, -1), 2.2),
+          ('LEFTPADDING', (0, 0), (-1, -1), 3),
+          ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+          ('BACKGROUND', (0, 0), (0, 0), colors.HexColor('#f1f5f9')),
+          ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f1f5f9')),
+          ('LINEABOVE', (0, -1), (-1, -1), 1, BRAND)]
+    for ci, m in enumerate(cols, 1):
+        xs.append(('BACKGROUND', (ci, 0), (ci, 0),
+                   colors.HexColor(hue[m]) if m != UNSPEC_MACHINE else colors.HexColor('#f1f5f9')))
+    xs.append(('BACKGROUND', (len(cols) + 1, 0), (len(cols) + 1, 0), colors.HexColor('#f1f5f9')))
+    xs += [('BACKGROUND', (c, r), (c, r), t) for c, r, t in tints]
+    xt.setStyle(TableStyle(xs))
 
-    # ══ 2. สรุปตามประเภทเครื่อง ══════════════════════════════════
-    story.append(PageBreak())
-    story += _section('2. สรุปรายประเภทเครื่อง',
-                      'ตำแหน่งงานหลัก = ตำแหน่งที่ใช้เครื่องประเภทนั้นมากที่สุด 3 อันดับแรก')
+    story += [Spacer(1, 4 * mm),
+              _heading('1.', 'ตำแหน่งงาน × ประเภทเครื่อง',
+                       'เฉพาะตำแหน่งที่มีเครื่องระบุประเภทแล้ว · ยิ่งเข้ม = ยิ่งมาก · · คือไม่มี'),
+              Spacer(1, 1.5 * mm), xt]
 
-    m_rows = [[Paragraph(t, hdr_st) for t in
-               ['ประเภทเครื่อง', 'จำนวน', 'สัดส่วน', 'ค่าเช่า/เดือน',
-                'ตำแหน่งงานหลัก (3 อันดับแรก)', 'BU หลัก']]]
-    for m in cols:
+    # ── 2. สรุปรายประเภทเครื่อง ──────────────────────────────────
+    BAR = W * .13
+    m_head = [Paragraph(t, hdr_d) for t in
+              ['ประเภทเครื่อง', 'จำนวน', 'สัดส่วน', 'ค่าเช่า/เดือน',
+               'ตำแหน่งงานที่ใช้มากที่สุด (3 อันดับแรก)', 'BU หลัก']]
+    m_body, m_style = [], []
+    top_n = max([machines[m] for m in cols if m != UNSPEC_MACHINE] or [1])
+    for i, m in enumerate(cols, 1):
         sub = [r for r in rows if _machine_of(r) == m]
-        top_pos = Counter(_position_of(r) for r in sub).most_common(3)
-        top_bu  = Counter((r.get('emp_bu_code') or '—') for r in sub).most_common(3)
-        m_rows.append([
-            Paragraph(m, _style('m', 8, colors.black if m != UNSPEC_MACHINE else MUTED)),
-            Paragraph('{:,}'.format(len(sub)), _style('m', 8, align=TA_CENTER, bold=True)),
-            Paragraph('{:.1f}%'.format(len(sub) / total * 100), _style('m', 8, SLATE, align=TA_CENTER)),
-            Paragraph(_fmt_baht(sum(r.get('monthly_charge') or 0 for r in sub)),
-                      _style('m', 8, align=TA_CENTER)),
-            Paragraph(' · '.join('%s (%d)' % (p, n) for p, n in top_pos) or '—',
-                      _style('m', 7.6, SLATE, leading=9.2)),
-            Paragraph(' · '.join('%s (%d)' % (b, n) for b, n in top_bu) or '—',
-                      _style('m', 7.6, SLATE)),
-        ])
-    mt = Table(m_rows, colWidths=[W * .20, W * .07, W * .07, W * .11, W * .40, W * .15], repeatRows=1)
-    mt.setStyle(TableStyle([
-        ('BACKGROUND',     (0, 0), (-1, 0), NAVY),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BG_ALT]),
-        ('GRID',           (0, 0), (-1, -1), 0.4, LINE),
-        ('BOX',            (0, 0), (-1, -1), 0.7, NAVY),
-        ('VALIGN',         (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING',     (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING',  (0, 0), (-1, -1), 4),
-    ]))
-    story.append(mt)
-
-    # ══ 3. Top ตำแหน่งงาน ════════════════════════════════════════
-    story += _section('3. ตำแหน่งงานที่ใช้เครื่องมากที่สุด 15 อันดับแรก',
-                      'แถบแสดงสัดส่วนจำนวนเครื่องเทียบกับอันดับ 1')
-    top15 = pos_order[:15]
-    top_n = sum(grid[top15[0]].values()) if top15 else 1
-    BAR_W = W * .30
-    p_rows = [[Paragraph(t, hdr_st) for t in
-               ['อันดับ', 'ตำแหน่งงาน', 'จำนวนเครื่อง', 'สัดส่วน', 'ประเภทเครื่องที่ใช้']]]
-    for i, p in enumerate(top15, 1):
-        n = sum(grid[p].values())
-        bar_len = max(int(BAR_W * n / top_n), 2)
-        bar = Table([['']], colWidths=[bar_len], rowHeights=[6])
-        bar.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), BLUE),
-                                 ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                                 ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
-        p_rows.append([
-            Paragraph(str(i), _style('p', 8, MUTED, align=TA_CENTER)),
-            Paragraph(p, _style('p', 8)),
-            Paragraph('{:,}'.format(n), _style('p', 8, bold=True, align=TA_CENTER)),
+        n   = len(sub)
+        bar = Table([['']], colWidths=[min(max(BAR * n / top_n, 1.2), BAR)], rowHeights=[5],
+                    style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(hue[m])),
+                                      ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                                      ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+        m_body.append([
+            Paragraph(m, _style('m', 7.6, INK if m != UNSPEC_MACHINE else MUTED,
+                                bold=m != UNSPEC_MACHINE)),
+            Paragraph('{:,}'.format(n), _style('m', 8, INK, bold=True, align=TA_CENTER)),
             bar,
-            Paragraph(' · '.join('%s (%d)' % (m, c) for m, c in grid[p].most_common()),
-                      _style('p', 7.4, SLATE, leading=9)),
+            Paragraph(_fmt_baht(sum(r.get('monthly_charge') or 0 for r in sub)),
+                      _style('m', 7.6, SLATE, align=TA_CENTER)),
+            Paragraph(' · '.join('%s (%d)' % (p, c) for p, c in
+                                 Counter(_position_of(r) for r in sub).most_common(3)) or '—',
+                      _style('m', 7.2, SLATE, leading=8.6)),
+            Paragraph(' · '.join('%s (%d)' % (b, c) for b, c in
+                                 Counter((r.get('emp_bu_code') or '—') for r in sub).most_common(3)) or '—',
+                      _style('m', 7.2, SLATE)),
         ])
-    pt = Table(p_rows, colWidths=[W * .06, W * .24, W * .09, BAR_W, W - (W * .39) - BAR_W],
+        m_style.append(('LINEBEFORE', (0, i), (0, i), 2.5, colors.HexColor(hue[m])))
+    mt = Table([m_head] + m_body,
+               colWidths=[W * .19, W * .06, BAR, W * .10, W * .37, W - (W * .72) - BAR],
                repeatRows=1)
-    pt.setStyle(TableStyle([
-        ('BACKGROUND',     (0, 0), (-1, 0), NAVY),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BG_ALT]),
-        ('GRID',           (0, 0), (-1, -1), 0.4, LINE),
-        ('BOX',            (0, 0), (-1, -1), 0.7, NAVY),
-        ('VALIGN',         (0, 0), (-1, -1), 'MIDDLE'),
-        ('ALIGN',          (3, 1), (3, -1), 'LEFT'),
-        ('TOPPADDING',     (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING',  (0, 0), (-1, -1), 4),
+    mt.setStyle(TableStyle(m_style + [
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, colors.HexColor('#fafcff')]),
+        ('LINEBELOW', (0, 0), (-1, -2), 0.4, LINE),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (2, 1), (2, -1), 'LEFT'),
+        ('TOPPADDING', (0, 0), (-1, -1), 2.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
     ]))
-    story.append(pt)
+    story += [Spacer(1, 4 * mm),
+              _heading('2.', 'สรุปรายประเภทเครื่อง', 'แถบสีแสดงสัดส่วนจำนวนเครื่อง'),
+              Spacer(1, 1.5 * mm), mt]
 
-    # ══ 4. รายการเครื่องที่ระบุประเภทแล้ว ═════════════════════════
-    detail = [r for r in rows if _machine_of(r) != UNSPEC_MACHINE]
-    detail.sort(key=lambda r: (_machine_of(r), _position_of(r), r.get('user_name') or ''))
-    if detail:
-        story.append(PageBreak())
-        note = 'เฉพาะเครื่องที่กรอกช่อง “ประเภท” ใน eDevice แล้ว ({:,} จาก {:,} เครื่อง)'.format(
-            len(detail), total)
-        if len(detail) > MAX_DETAIL_ROWS:
-            note += ' · แสดง {:,} รายการแรก'.format(MAX_DETAIL_ROWS)
-            detail = detail[:MAX_DETAIL_ROWS]
-        story += _section('4. รายการเครื่องที่ระบุประเภทเครื่องแล้ว', note)
-
-        d_rows = [[Paragraph(t, hdr_st) for t in
-                   ['ประเภทเครื่อง', 'Asset No.', 'รหัสเครื่อง', 'ประเภท', 'รุ่น',
-                    'ผู้ถือครอง', 'ตำแหน่งงาน', 'BU', 'แผนก', 'สัญญา']]]
-        cell_st = _style('d', 7.2, colors.black, leading=8.8)
-        for r in detail:
-            d_rows.append([
-                Paragraph(_machine_of(r), cell_st),
-                Paragraph(r.get('asset_no') or '—', cell_st),
-                Paragraph(r.get('computer_id') or '—', cell_st),
-                Paragraph(r.get('asset_type') or '—', cell_st),
-                Paragraph(r.get('model') or r.get('brand') or '—', cell_st),
-                Paragraph('ส่วนกลาง' if r.get('is_central') else (r.get('user_name') or '—'), cell_st),
-                Paragraph(_position_of(r), cell_st),
-                Paragraph(r.get('emp_bu_code') or '—', cell_st),
-                Paragraph(r.get('emp_dept') or r.get('dept_sheet') or '—', cell_st),
-                Paragraph(r.get('ownership') or '—', cell_st),
-            ])
-        dt = Table(d_rows, colWidths=[W * .155, W * .075, W * .07, W * .06, W * .105,
-                                      W * .115, W * .16, W * .04, W * .155, W * .045],
-                   repeatRows=1)
-        dt.setStyle(TableStyle([
-            ('BACKGROUND',     (0, 0), (-1, 0), NAVY),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, BG_ALT]),
-            ('GRID',           (0, 0), (-1, -1), 0.4, LINE),
-            ('BOX',            (0, 0), (-1, -1), 0.7, NAVY),
-            ('VALIGN',         (0, 0), (-1, -1), 'MIDDLE'),
-            ('TOPPADDING',     (0, 0), (-1, -1), 2.5),
-            ('BOTTOMPADDING',  (0, 0), (-1, -1), 2.5),
-        ]))
-        story.append(dt)
-
-    # ── หมายเหตุท้ายรายงาน ──────────────────────────────────────
     unspec = machines.get(UNSPEC_MACHINE, 0)
     if unspec:
-        story.append(Spacer(1, 5 * mm))
-        story.append(Paragraph(
-            '⚠ หมายเหตุ: มี {:,} เครื่อง ({:.1f}%) ที่ยังไม่ได้กรอกช่อง “ประเภท” ใน eDevice '
-            'ตัวเลขในรายงานนี้จึงสะท้อนเฉพาะเครื่องที่มีข้อมูลครบ '
-            'แนะนำให้ปรับปรุงข้อมูลใน eDevice เพื่อให้รายงานสมบูรณ์ขึ้น'.format(
-                unspec, unspec / total * 100),
-            _style('warn', 8, AMBER, leading=11)))
+        story += [Spacer(1, 2.5 * mm), Paragraph(
+            '⚠ มี {:,} เครื่อง ({:.1f}%) ที่ยังไม่ได้กรอกช่อง “ประเภท” ใน eDevice — '
+            'ตัวเลขในรายงานสะท้อนเฉพาะเครื่องที่มีข้อมูลครบ'.format(unspec, unspec / total * 100),
+            _style('w', 7.4, AMBER))]
+    return story
 
-    doc.build(story)
+
+def build_asset_report(rows, filter_labels):
+    """rows = asset dict ที่ผ่าน filter แล้ว · คืน PDF หน้าเดียว
+
+    จำนวนแถวในตารางไขว้ปรับอัตโนมัติจนกว่าจะจบในหน้าเดียว
+    """
+    _ensure_fonts()
+    generated_at = datetime.now().strftime('%d/%m/%Y %H:%M น.')
+    buf = None
+    for max_pos in (16, 13, 10, 8, 6, 4, 2):
+        buf = io.BytesIO()
+        doc = _doc(buf, generated_at)
+        doc.build(_story(rows, filter_labels, doc.width, max_pos))
+        if getattr(doc, '_pages', 1) <= 1:
+            break
     buf.seek(0)
     return buf
