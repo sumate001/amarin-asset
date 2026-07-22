@@ -6,6 +6,37 @@ import requests as req_lib
 app = Flask(__name__)
 DB = os.path.join(os.path.dirname(__file__), 'employees.db')
 
+
+# ---------- config / secrets ----------
+
+def _load_dotenv():
+    """อ่านไฟล์ .env (ถ้ามี) เข้า os.environ — ไม่พึ่ง lib ภายนอก
+
+    .env อยู่ใน .gitignore แล้ว — credential จึงไม่ติดไปกับ repo
+    ค่าที่ตั้งไว้ใน environment อยู่แล้ว (เช่นจาก systemd) จะไม่ถูกทับ
+    """
+    path = os.path.join(os.path.dirname(__file__), '.env')
+    if not os.path.exists(path):
+        return
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            k, v = line.split('=', 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"\''))
+
+
+_load_dotenv()
+
+
+def _require_env(key, hint):
+    val = os.environ.get(key, '').strip()
+    if not val:
+        raise RuntimeError(
+            f'ไม่พบค่า {key} — ตั้งใน .env หรือ environment ก่อนใช้งาน ({hint})')
+    return val
+
 # ---------- DB helpers ----------
 
 def get_db():
@@ -354,9 +385,9 @@ def import_excel():
 
 # ---------- IT Assets (Google Sheets) ----------
 
-SHEETS_ID         = '***REMOVED-SHEETS_ID***'
+SHEETS_ID         = os.environ.get('SHEETS_ID', '***REMOVED-SHEETS_ID***')
 SHEETS_URL        = f'https://docs.google.com/spreadsheets/d/{SHEETS_ID}/export?format=csv'
-SHEETS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwRYfZAOADCUx9ClgcmsKZgNQCd4Ym12quCO-fiMboQnmwpzEl_641wKKuRJHqy7lXU/exec'
+SHEETS_SCRIPT_URL = os.environ.get('SHEETS_SCRIPT_URL', '')
 CACHE_TTL  = 1800  # 30 min
 ASSET_CACHE_SIGNAL = os.path.join(os.path.dirname(__file__), 'asset_cache_signal.txt')
 
@@ -1238,6 +1269,10 @@ def sheets_update_info():
     if not updates:
         return jsonify({'ok': False, 'error': 'ไม่มีข้อมูลที่จะอัพเดท', 'skipped': len(skipped)})
 
+    if not SHEETS_SCRIPT_URL:
+        return jsonify({'ok': False,
+                        'error': 'ยังไม่ได้ตั้งค่า SHEETS_SCRIPT_URL ใน .env'}), 500
+
     try:
         import requests as _req
         payload = json.dumps({'updates': updates}).encode('utf-8')
@@ -1419,8 +1454,8 @@ def _edevice_login():
     sess.post(EDEVICE_LOGIN_URL, data={
         '__VIEWSTATE': vs, '__EVENTVALIDATION': ev,
         'ctl00_ToolkitScriptManager1_HiddenField': '',
-        'ctl00$ContentPlaceHolder1$loginauth1$txtlogin': '90004',
-        'ctl00$ContentPlaceHolder1$loginauth1$txtpass': '12QWaszx@',
+        'ctl00$ContentPlaceHolder1$loginauth1$txtlogin': _require_env('EDEVICE_USER', 'username ที่ใช้ล็อกอิน eDevice'),
+        'ctl00$ContentPlaceHolder1$loginauth1$txtpass': _require_env('EDEVICE_PASS', 'password ที่ใช้ล็อกอิน eDevice'),
         'ctl00$ContentPlaceHolder1$loginauth1$btnlogin': 'เข้าสู่ระบบ',
     }, timeout=15, allow_redirects=True)
     # init session ของแต่ละระบบ eDevice (ไม่ init จะได้หน้าเปล่า ~1.2KB)

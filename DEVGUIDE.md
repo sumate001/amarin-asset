@@ -348,13 +348,16 @@ def _norm(s):
 
 ## 7. Data Flow: eDevice Sync
 
+> **credential ไม่ได้ hardcode ในโค้ดแล้ว** — เก็บใน `.env` (อยู่ใน `.gitignore`)
+> ดูตัวอย่างที่ `.env.example` · ถ้าไม่ตั้งค่า `_edevice_login()` จะ raise RuntimeError พร้อมบอกว่าขาดตัวไหน
+
 ### Login Flow
 
 ```
 GET  http://amarin.intra/webappl/acorporate/index.aspx?s=out
      ← scrape __VIEWSTATE, __EVENTVALIDATION (ASP.NET hidden fields)
 
-POST same URL + credentials (username=90004)
+POST same URL + credentials (อ่านจาก .env: EDEVICE_USER / EDEVICE_PASS)
      ← ระบบ redirect → session cookie ถูก set
 
 GET  http://www.amarin.intra/webappl/eDevice_ATV/default.asp?ID_Emp=...
