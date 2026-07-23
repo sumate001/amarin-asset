@@ -204,9 +204,27 @@ def _story(rows, filter_labels, W):
     n_pos    = len({_position_of(r) for r in rows})
     pct      = (spec_cnt / total * 100) if total else 0
 
-    story = [Paragraph(
-        'ตัวกรอง: ' + (' · '.join(filter_labels) if filter_labels else 'ไม่มี (ข้อมูลทั้งหมด)'),
-        _style('flt', 8, SLATE)), Spacer(1, 2.5 * mm)]
+    # ── แถบตัวกรอง — เน้นให้เห็นชัดว่ารายงานอิงข้อมูลชุดไหน ──────────
+    if filter_labels:
+        flt_html = ('<font size="8" color="#475569">ตัวกรองที่ใช้&nbsp;&nbsp;</font>'
+                    + '<b>' + '&nbsp;&nbsp;·&nbsp;&nbsp;'.join(filter_labels) + '</b>')
+        flt_cell = Paragraph(flt_html, _style('flt', 13, BRAND, bold=True, leading=17))
+        flt_bg, flt_bar = _tint(CAT[0], .10), BRAND
+    else:
+        flt_cell = Paragraph('<font color="#94a3b8">ไม่มีตัวกรอง — แสดงข้อมูลทั้งหมด</font>',
+                             _style('flt', 9, MUTED, leading=12))
+        flt_bg, flt_bar = colors.HexColor('#f1f5f9'), colors.HexColor('#cbd5e1')
+    flt_tbl = Table([[flt_cell]], colWidths=[W])
+    flt_tbl.setStyle(TableStyle([
+        ('BACKGROUND',    (0, 0), (-1, -1), flt_bg),
+        ('LINEBEFORE',    (0, 0), (0, -1), 3.5, flt_bar),
+        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 8),
+        ('TOPPADDING',    (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story = [flt_tbl, Spacer(1, 3 * mm)]
 
     # ── KPI ──────────────────────────────────────────────────────
     kpis = [('เครื่องทั้งหมด', '{:,}'.format(total), CAT[0]),
