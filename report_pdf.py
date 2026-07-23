@@ -68,6 +68,46 @@ def _style(name, size, color=INK, bold=False, align=TA_LEFT, leading=None):
 UNSPEC_MACHINE  = '(ยังไม่ระบุ)'
 UNSPEC_POSITION = '(ไม่ระบุตำแหน่ง)'
 
+# ── ลำดับมาตรฐานของประเภทเครื่อง + ชื่อเต็มตามที่หน่วยงานกำหนด ──────
+# คอลัมน์/แถวในรายงานเรียงตามลำดับนี้เสมอ (ไม่เรียงตามจำนวน)
+# ประเภทที่ไม่อยู่ในลิสต์นี้จะต่อท้ายตามจำนวนมากไปน้อย
+MACHINE_ORDER = [
+    ('NB สำนักงานทั่วไป',
+     'เครื่องคอมพิวเตอร์แบบพกพาสำหรับใช้งานสำนักงานทั่วไป'),
+    ('NB สำนักงานประสิทธิภาพสูง 15.6 นิ้ว',
+     'เครื่องคอมพิวเตอร์แบบพกพาสำหรับใช้งานสำนักงาน (ประสิทธิภาพสูง) จอ 15.6 นิ้ว'),
+    ('NB สำนักงานประสิทธิภาพสูง 14 นิ้ว',
+     'เครื่องคอมพิวเตอร์แบบพกพาสำหรับใช้งานสำนักงาน (ประสิทธิภาพสูง) จอ 14 นิ้ว'),
+    ('NB สำหรับงานปรับแต่งภาพ',
+     'เครื่องคอมพิวเตอร์แบบพกพาสำหรับใช้งานปรับแต่งภาพ'),
+    ('NB สำหรับงานปรับแต่งภาพและงานวีดีทัศน์',
+     'เครื่องคอมพิวเตอร์แบบพกพาสำหรับใช้ตัดต่องานวีดีทัศน์'),
+    ('PC สำหรับงานวีดีทัศน์',
+     'เครื่องคอมพิวเตอร์สำหรับงานตัดต่อวีดีทัศน์'),
+    ('PC สำนักงานประสิทธิภาพสูง',
+     'เครื่องคอมพิวเตอร์สำหรับใช้งานสำนักงาน (ประสิทธิภาพสูง)'),
+]
+
+
+def _norm_machine(s):
+    """normalize ชื่อประเภทเครื่องก่อนเทียบ — กัน 'สํา' (นิคหิต+สระอา)
+    กับ 'สำ' (สระอำ) ที่หน้าตาเหมือนกันแต่ unicode ต่างกัน + ตัดช่องว่างซ้ำ"""
+    s = (s or '').replace('ํา', 'ำ')   # ◌ํ + า  →  ำ
+    return ' '.join(s.split())
+
+
+_ORDER_RANK = {_norm_machine(k): i for i, (k, _) in enumerate(MACHINE_ORDER)}
+_FULL_NAME  = {_norm_machine(k): v for k, v in MACHINE_ORDER}
+
+
+def _machine_rank(m):
+    """คีย์เรียงลำดับ: ประเภทในลิสต์มาก่อน (ตามลำดับ), นอกลิสต์ต่อท้ายตามจำนวน"""
+    return _ORDER_RANK.get(_norm_machine(m), len(MACHINE_ORDER))
+
+
+def _full_name(m):
+    return _FULL_NAME.get(_norm_machine(m), '')
+
 
 def _machine_of(r):
     return (r.get('machine_type') or '').strip() or UNSPEC_MACHINE
@@ -178,8 +218,9 @@ def _story(rows, filter_labels, W, max_pos):
         return story
 
     # ── 1. ตารางไขว้ ─────────────────────────────────────────────
+    # เรียงตามลำดับมาตรฐาน (MACHINE_ORDER) ก่อน — นอกลิสต์ต่อท้ายตามจำนวน
     cols = sorted([m for m in machines if m != UNSPEC_MACHINE],
-                  key=lambda m: (-machines[m], m))
+                  key=lambda m: (_machine_rank(m), -machines[m], m))
     hue = {m: CAT[i % len(CAT)] for i, m in enumerate(cols)}
     if UNSPEC_MACHINE in machines:
         cols.append(UNSPEC_MACHINE)
@@ -276,20 +317,25 @@ def _story(rows, filter_labels, W, max_pos):
     # ── 2. สรุปรายประเภทเครื่อง ──────────────────────────────────
     BAR = W * .13
     m_head = [Paragraph(t, hdr_d) for t in
-              ['ประเภทเครื่อง', 'จำนวน', 'สัดส่วน', 'ค่าเช่า/เดือน',
-               'ตำแหน่งงานที่ใช้มากที่สุด (3 อันดับแรก)', 'BU หลัก']]
+              ['#', 'ประเภทเครื่อง (ชื่อในระบบ eDevice / ชื่อเต็ม)', 'จำนวน', 'สัดส่วน',
+               'ค่าเช่า/เดือน', 'ตำแหน่งงานที่ใช้มากที่สุด (3 อันดับแรก)', 'BU หลัก']]
     m_body, m_style = [], []
     top_n = max([machines[m] for m in cols if m != UNSPEC_MACHINE] or [1])
     for i, m in enumerate(cols, 1):
         sub = [r for r in rows if _machine_of(r) == m]
         n   = len(sub)
+        rank = _machine_rank(m)
+        no   = str(rank + 1) if rank < len(MACHINE_ORDER) else '—'
+        full = _full_name(m)
+        # ช่องแรก: ชื่อในระบบ (ตัวหนา) + ชื่อเต็มบรรทัดล่าง (สีจาง)
+        name_cell = ('<b>%s</b>' % m) + ('<br/><font size="6" color="#94a3b8">%s</font>' % full if full else '')
         bar = Table([['']], colWidths=[min(max(BAR * n / top_n, 1.2), BAR)], rowHeights=[5],
                     style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(hue[m])),
                                       ('LEFTPADDING', (0, 0), (-1, -1), 0),
                                       ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
         m_body.append([
-            Paragraph(m, _style('m', 7.6, INK if m != UNSPEC_MACHINE else MUTED,
-                                bold=m != UNSPEC_MACHINE)),
+            Paragraph(no, _style('mno', 7.6, SLATE, bold=True, align=TA_CENTER)),
+            Paragraph(name_cell, _style('m', 7.4, INK if m != UNSPEC_MACHINE else MUTED, leading=8.6)),
             Paragraph('{:,}'.format(n), _style('m', 8, INK, bold=True, align=TA_CENTER)),
             bar,
             Paragraph(_fmt_baht(sum(r.get('monthly_charge') or 0 for r in sub)),
@@ -301,16 +347,17 @@ def _story(rows, filter_labels, W, max_pos):
                                  Counter((r.get('emp_bu_code') or '—') for r in sub).most_common(3)) or '—',
                       _style('m', 7.2, SLATE)),
         ])
-        m_style.append(('LINEBEFORE', (0, i), (0, i), 2.5, colors.HexColor(hue[m])))
+        m_style.append(('LINEBEFORE', (1, i), (1, i), 2.5, colors.HexColor(hue[m])))
     mt = Table([m_head] + m_body,
-               colWidths=[W * .19, W * .06, BAR, W * .10, W * .37, W - (W * .72) - BAR],
+               colWidths=[W * .035, W * .275, W * .06, BAR, W * .10, W * .29,
+                          W - (W * .76) - BAR],
                repeatRows=1)
     mt.setStyle(TableStyle(m_style + [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, colors.HexColor('#fafcff')]),
         ('LINEBELOW', (0, 0), (-1, -2), 0.4, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('ALIGN', (2, 1), (2, -1), 'LEFT'),
+        ('ALIGN', (3, 1), (3, -1), 'LEFT'),
         ('TOPPADDING', (0, 0), (-1, -1), 2.5),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
     ]))
