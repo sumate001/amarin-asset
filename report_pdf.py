@@ -27,7 +27,7 @@ FONT_B   = 'Sarabun-Bold'
 # สำหรับคู่สีที่อยู่ติดกันบนพื้นสว่าง ซึ่งตรงกับการใช้งานที่นี่
 # (หัวคอลัมน์เรียงติดกัน) และทุกช่องมี label กำกับเสมอ
 CAT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4',
-       '#008300', '#4a3aa7', '#e34948']
+       '#008300', '#4a3aa7', '#e34948', '#0f766e', '#9a3412']
 NEUTRAL = '#94a3b8'          # ใช้กับ "(ยังไม่ระบุ)" — เป็นความว่าง ไม่ใช่ identity
 
 INK     = colors.HexColor('#0f172a')
@@ -86,7 +86,15 @@ MACHINE_ORDER = [
      'เครื่องคอมพิวเตอร์สำหรับงานตัดต่อวีดีทัศน์'),
     ('PC สำนักงานประสิทธิภาพสูง',
      'เครื่องคอมพิวเตอร์สำหรับใช้งานสำนักงาน (ประสิทธิภาพสูง)'),
+    ('Macbook',
+     'เครื่องคอมพิวเตอร์แบบพกพา Apple (MacBook)'),
+    ('iMac',
+     'เครื่องคอมพิวเตอร์ตั้งโต๊ะ Apple (iMac)'),
 ]
+
+# ลำดับ 8-9 ไม่ได้มาจากช่อง "ประเภท" ใน eDevice แต่อนุมานจากช่อง "รุ่น"
+MAC_MACHINE  = 'Macbook'
+IMAC_MACHINE = 'iMac'
 
 
 def _norm_machine(s):
@@ -110,7 +118,17 @@ def _full_name(m):
 
 
 def _machine_of(r):
-    return (r.get('machine_type') or '').strip() or UNSPEC_MACHINE
+    mt = (r.get('machine_type') or '').strip()
+    if mt:
+        return mt
+    # ยังไม่ได้ระบุประเภทใน eDevice — อนุมานจากช่อง "รุ่น" กรณีเป็นเครื่อง Mac
+    text = '%s %s %s' % (r.get('model') or '', r.get('brand') or '', r.get('asset_type') or '')
+    text = text.lower()
+    if 'imac' in text:
+        return IMAC_MACHINE
+    if 'macbook' in text or 'mac book' in text:
+        return MAC_MACHINE
+    return UNSPEC_MACHINE
 
 
 def _position_of(r):
