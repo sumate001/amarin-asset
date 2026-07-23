@@ -214,7 +214,8 @@ def _story(rows, filter_labels, W):
             ('ระบุประเภทเครื่องแล้ว', '{:,} ({:.1f}%)'.format(spec_cnt, pct),
              CAT[1] if pct < 50 else CAT[5]),
             ('ประเภทเครื่องที่พบ',
-             '{:,} ประเภท'.format(len([m for m in machines if m != UNSPEC_MACHINE])), CAT[6]),
+             '{:,} / {} ประเภท'.format(len([m for m in machines if m != UNSPEC_MACHINE]),
+                                        len(MACHINE_ORDER)), CAT[6]),
             ('ตำแหน่งงานที่เกี่ยวข้อง', '{:,} ตำแหน่ง'.format(n_pos), CAT[4])]
     kpi = Table([[Paragraph(l, _style('kl', 7.5, SLATE, align=TA_CENTER)) for l, _, _ in kpis],
                  [Paragraph(v, _style('kv', 14, colors.HexColor(c), bold=True, align=TA_CENTER))
