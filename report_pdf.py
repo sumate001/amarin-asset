@@ -178,7 +178,7 @@ def _heading(num, title, note):
 #  main
 # ══════════════════════════════════════════════════════════════════
 
-def _story(rows, filter_labels, W, max_pos):
+def _story(rows, filter_labels, W):
     total    = len(rows)
     monthly  = sum(r.get('monthly_charge') or 0 for r in rows)
     machines = Counter(_machine_of(r) for r in rows)
@@ -217,8 +217,7 @@ def _story(rows, filter_labels, W, max_pos):
                   Paragraph('ไม่มีเครื่องที่ตรงกับตัวกรองที่เลือกไว้', _style('e', 10, SLATE))]
         return story
 
-    # ── 1. ตารางไขว้ ─────────────────────────────────────────────
-    # เรียงตามลำดับมาตรฐาน (MACHINE_ORDER) ก่อน — นอกลิสต์ต่อท้ายตามจำนวน
+    # เรียงประเภทเครื่องตามลำดับมาตรฐาน (MACHINE_ORDER) — นอกลิสต์ต่อท้ายตามจำนวน
     cols = sorted([m for m in machines if m != UNSPEC_MACHINE],
                   key=lambda m: (_machine_rank(m), -machines[m], m))
     hue = {m: CAT[i % len(CAT)] for i, m in enumerate(cols)}
@@ -233,88 +232,11 @@ def _story(rows, filter_labels, W, max_pos):
     def spec(p):
         return sum(n for m, n in grid[p].items() if m != UNSPEC_MACHINE)
 
-    # แสดงเฉพาะตำแหน่งที่มีเครื่องระบุประเภทแล้ว — ตำแหน่งที่ยังไม่กรอกเลย
-    # ไม่ได้ตอบคำถามของรายงานนี้ ยุบรวมเป็นแถวเดียวไว้ท้ายตาราง
-    ranked = sorted([p for p in grid if spec(p)],
-                    key=lambda p: (-spec(p), -sum(grid[p].values()), p))
-    shown, rest = ranked[:max_pos], ranked[max_pos:] + [p for p in grid if not spec(p)]
-
-    hdr = _style('th', 6.8, WHITE, bold=True, align=TA_CENTER, leading=8)
+    hdr   = _style('th', 6.8, WHITE, bold=True, align=TA_CENTER, leading=8)
     hdr_d = _style('thd', 6.8, SLATE, bold=True, align=TA_CENTER, leading=8)
     hdr_sm = _style('ths', 6.1, WHITE, bold=True, align=TA_CENTER, leading=7.2)
-    pos_s = _style('tp', 7.2, INK, leading=8.6)
-    zero  = _style('tz', 7.5, colors.HexColor('#cbd5e1'), align=TA_CENTER)
 
-    head = [Paragraph('ตำแหน่งงาน', hdr_d)] + \
-           [Paragraph(c, (hdr if c != UNSPEC_MACHINE else hdr_d) if len(c) <= 26
-                      else (hdr_sm if c != UNSPEC_MACHINE else hdr_d)) for c in cols] + \
-           [Paragraph('รวม', hdr_d)]
-
-    col_max = {m: max([grid[p].get(m, 0) for p in shown] or [0]) or 1 for m in cols}
-    body, tints = [], []
-    for ri, p in enumerate(shown, 1):
-        c = grid[p]
-        line = [Paragraph(p, pos_s)]
-        for ci, m in enumerate(cols, 1):
-            n = c.get(m, 0)
-            if n:
-                line.append(Paragraph('{:,}'.format(n),
-                                      _style('n', 7.8, INK, bold=True, align=TA_CENTER)))
-                if m != UNSPEC_MACHINE:
-                    # sequential ramp ภายในคอลัมน์ — hue เดียว เข้มตามจำนวน
-                    tints.append((ci, ri, _tint(hue[m], .12 + .38 * n / col_max[m])))
-            else:
-                line.append(Paragraph('·', zero))
-        line.append(Paragraph('{:,}'.format(sum(c.values())),
-                              _style('n', 7.8, BRAND, bold=True, align=TA_CENTER)))
-        body.append(line)
-
-    if rest:
-        agg = Counter()
-        for p in rest:
-            agg.update(grid[p])
-        body.append([Paragraph('อื่น ๆ อีก {:,} ตำแหน่ง'.format(len(rest)),
-                               _style('to', 7, MUTED))] +
-                    [Paragraph('{:,}'.format(agg.get(m, 0)) if agg.get(m, 0) else '·',
-                               _style('n', 7.5, SLATE, align=TA_CENTER) if agg.get(m, 0) else zero)
-                     for m in cols] +
-                    [Paragraph('{:,}'.format(sum(agg.values())),
-                               _style('n', 7.5, SLATE, align=TA_CENTER))])
-    foot = [Paragraph('รวมทั้งสิ้น', _style('tf', 7.8, INK, bold=True))] + \
-           [Paragraph('{:,}'.format(machines.get(m, 0)),
-                      _style('n', 7.8, INK, bold=True, align=TA_CENTER)) for m in cols] + \
-           [Paragraph('{:,}'.format(total), _style('n', 7.8, BRAND, bold=True, align=TA_CENTER))]
-
-    # จำกัดความกว้างคอลัมน์ประเภทเครื่อง — ถ้ามีไม่กี่ประเภท ปล่อยให้ยืดเต็มหน้า
-    # จะดูโหว่ ให้คอลัมน์ตำแหน่งงานดูดพื้นที่ที่เหลือแทน
-    tot_w  = 15 * mm
-    each_w = min((W - 55 * mm - tot_w) / len(cols), 42 * mm)
-    pos_w  = W - tot_w - each_w * len(cols)
-    xt = Table([head] + body + [foot],
-               colWidths=[pos_w] + [each_w] * len(cols) + [tot_w],
-               repeatRows=1)
-    xs = [('GRID', (0, 0), (-1, -1), 0.4, LINE),
-          ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-          ('TOPPADDING', (0, 0), (-1, -1), 2.2),
-          ('BOTTOMPADDING', (0, 0), (-1, -1), 2.2),
-          ('LEFTPADDING', (0, 0), (-1, -1), 3),
-          ('RIGHTPADDING', (0, 0), (-1, -1), 3),
-          ('BACKGROUND', (0, 0), (0, 0), colors.HexColor('#f1f5f9')),
-          ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f1f5f9')),
-          ('LINEABOVE', (0, -1), (-1, -1), 1, BRAND)]
-    for ci, m in enumerate(cols, 1):
-        xs.append(('BACKGROUND', (ci, 0), (ci, 0),
-                   colors.HexColor(hue[m]) if m != UNSPEC_MACHINE else colors.HexColor('#f1f5f9')))
-    xs.append(('BACKGROUND', (len(cols) + 1, 0), (len(cols) + 1, 0), colors.HexColor('#f1f5f9')))
-    xs += [('BACKGROUND', (c, r), (c, r), t) for c, r, t in tints]
-    xt.setStyle(TableStyle(xs))
-
-    story += [Spacer(1, 4 * mm),
-              _heading('1.', 'ตำแหน่งงาน × ประเภทเครื่อง',
-                       'เฉพาะตำแหน่งที่มีเครื่องระบุประเภทแล้ว · ยิ่งเข้ม = ยิ่งมาก · · คือไม่มี'),
-              Spacer(1, 1.5 * mm), xt]
-
-    # ── 2. สรุปรายประเภทเครื่อง ──────────────────────────────────
+    # ══ 1. สรุปรายประเภทเครื่อง ═══════════════════════════════════
     BAR = W * .13
     m_head = [Paragraph(t, hdr_d) for t in
               ['#', 'ประเภทเครื่อง (ชื่อในระบบ eDevice / ชื่อเต็ม)', 'จำนวน', 'สัดส่วน',
@@ -362,7 +284,7 @@ def _story(rows, filter_labels, W, max_pos):
         ('BOTTOMPADDING', (0, 0), (-1, -1), 2.5),
     ]))
     story += [Spacer(1, 4 * mm),
-              _heading('2.', 'สรุปรายประเภทเครื่อง', 'แถบสีแสดงสัดส่วนจำนวนเครื่อง'),
+              _heading('1.', 'สรุปรายประเภทเครื่อง', 'แถบสีแสดงสัดส่วนจำนวนเครื่อง'),
               Spacer(1, 1.5 * mm), mt]
 
     unspec = machines.get(UNSPEC_MACHINE, 0)
@@ -371,22 +293,96 @@ def _story(rows, filter_labels, W, max_pos):
             '⚠ มี {:,} เครื่อง ({:.1f}%) ที่ยังไม่ได้กรอกช่อง “ประเภท” ใน eDevice — '
             'ตัวเลขในรายงานสะท้อนเฉพาะเครื่องที่มีข้อมูลครบ'.format(unspec, unspec / total * 100),
             _style('w', 7.4, AMBER))]
+
+    # ══ 2. ตารางไขว้ ตำแหน่งงาน × ประเภทเครื่อง (ทุกตำแหน่ง) ═══════
+    pos_s = _style('tp', 7.2, INK, leading=8.6)
+    zero  = _style('tz', 7.5, colors.HexColor('#cbd5e1'), align=TA_CENTER)
+
+    # แสดงทุกตำแหน่งที่มีเครื่องระบุประเภทแล้ว — เรียงตามจำนวนที่ระบุมากไปน้อย
+    # ตำแหน่งที่ยังไม่กรอกประเภทเลย (มีแต่คอลัมน์ยังไม่ระบุ) ยุบเป็นแถวเดียว
+    ranked = sorted([p for p in grid if spec(p)],
+                    key=lambda p: (-spec(p), -sum(grid[p].values()), p))
+    rest = [p for p in grid if not spec(p)]
+
+    head = [Paragraph('ตำแหน่งงาน', hdr_d)] + \
+           [Paragraph(c, (hdr if c != UNSPEC_MACHINE else hdr_d) if len(c) <= 26
+                      else (hdr_sm if c != UNSPEC_MACHINE else hdr_d)) for c in cols] + \
+           [Paragraph('รวม', hdr_d)]
+
+    col_max = {m: max([grid[p].get(m, 0) for p in ranked] or [0]) or 1 for m in cols}
+    body, tints = [], []
+    for ri, p in enumerate(ranked, 1):
+        c = grid[p]
+        line = [Paragraph(p, pos_s)]
+        for ci, m in enumerate(cols, 1):
+            n = c.get(m, 0)
+            if n:
+                line.append(Paragraph('{:,}'.format(n),
+                                      _style('n', 7.8, INK, bold=True, align=TA_CENTER)))
+                if m != UNSPEC_MACHINE:
+                    # sequential ramp ภายในคอลัมน์ — hue เดียว เข้มตามจำนวน
+                    tints.append((ci, ri, _tint(hue[m], .12 + .38 * n / col_max[m])))
+            else:
+                line.append(Paragraph('·', zero))
+        line.append(Paragraph('{:,}'.format(sum(c.values())),
+                              _style('n', 7.8, BRAND, bold=True, align=TA_CENTER)))
+        body.append(line)
+
+    if rest:
+        agg = Counter()
+        for p in rest:
+            agg.update(grid[p])
+        body.append([Paragraph('ตำแหน่งอื่น ๆ อีก {:,} ตำแหน่ง (ยังไม่ระบุประเภทเครื่อง)'.format(len(rest)),
+                               _style('to', 7, MUTED))] +
+                    [Paragraph('{:,}'.format(agg.get(m, 0)) if agg.get(m, 0) else '·',
+                               _style('n', 7.5, SLATE, align=TA_CENTER) if agg.get(m, 0) else zero)
+                     for m in cols] +
+                    [Paragraph('{:,}'.format(sum(agg.values())),
+                               _style('n', 7.5, SLATE, align=TA_CENTER))])
+    foot = [Paragraph('รวมทั้งสิ้น', _style('tf', 7.8, INK, bold=True))] + \
+           [Paragraph('{:,}'.format(machines.get(m, 0)),
+                      _style('n', 7.8, INK, bold=True, align=TA_CENTER)) for m in cols] + \
+           [Paragraph('{:,}'.format(total), _style('n', 7.8, BRAND, bold=True, align=TA_CENTER))]
+
+    tot_w  = 15 * mm
+    each_w = min((W - 55 * mm - tot_w) / len(cols), 42 * mm)
+    pos_w  = W - tot_w - each_w * len(cols)
+    xt = Table([head] + body + [foot],
+               colWidths=[pos_w] + [each_w] * len(cols) + [tot_w],
+               repeatRows=1)
+    xs = [('GRID', (0, 0), (-1, -1), 0.4, LINE),
+          ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+          ('TOPPADDING', (0, 0), (-1, -1), 2.2),
+          ('BOTTOMPADDING', (0, 0), (-1, -1), 2.2),
+          ('LEFTPADDING', (0, 0), (-1, -1), 3),
+          ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+          ('BACKGROUND', (0, 0), (0, 0), colors.HexColor('#f1f5f9')),
+          ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f1f5f9')),
+          ('LINEABOVE', (0, -1), (-1, -1), 1, BRAND)]
+    for ci, m in enumerate(cols, 1):
+        xs.append(('BACKGROUND', (ci, 0), (ci, 0),
+                   colors.HexColor(hue[m]) if m != UNSPEC_MACHINE else colors.HexColor('#f1f5f9')))
+    xs.append(('BACKGROUND', (len(cols) + 1, 0), (len(cols) + 1, 0), colors.HexColor('#f1f5f9')))
+    xs += [('BACKGROUND', (c, r), (c, r), t) for c, r, t in tints]
+    xt.setStyle(TableStyle(xs))
+
+    story += [Spacer(1, 5 * mm),
+              _heading('2.', 'ตำแหน่งงาน × ประเภทเครื่อง (ทุกตำแหน่ง)',
+                       'เรียงตามจำนวนเครื่องที่ระบุประเภทแล้ว · ยิ่งเข้ม = ยิ่งมาก · · คือไม่มี'),
+              Spacer(1, 1.5 * mm), xt]
     return story
 
 
 def build_asset_report(rows, filter_labels):
-    """rows = asset dict ที่ผ่าน filter แล้ว · คืน PDF หน้าเดียว
+    """rows = asset dict ที่ผ่าน filter แล้ว
 
-    จำนวนแถวในตารางไขว้ปรับอัตโนมัติจนกว่าจะจบในหน้าเดียว
+    ข้อ 1 = สรุปรายประเภทเครื่อง · ข้อ 2 = ตารางไขว้ตำแหน่งงาน × ประเภทเครื่อง
+    (แสดงทุกตำแหน่ง — กี่หน้าก็ได้ ตารางแตกหน้าเองพร้อมหัวตารางซ้ำ)
     """
     _ensure_fonts()
     generated_at = datetime.now().strftime('%d/%m/%Y %H:%M น.')
-    buf = None
-    for max_pos in (16, 13, 10, 8, 6, 4, 2):
-        buf = io.BytesIO()
-        doc = _doc(buf, generated_at)
-        doc.build(_story(rows, filter_labels, doc.width, max_pos))
-        if getattr(doc, '_pages', 1) <= 1:
-            break
+    buf = io.BytesIO()
+    doc = _doc(buf, generated_at)
+    doc.build(_story(rows, filter_labels, doc.width))
     buf.seek(0)
     return buf
