@@ -236,13 +236,20 @@ def _story(rows, filter_labels, W):
                   Paragraph('ไม่มีเครื่องที่ตรงกับตัวกรองที่เลือกไว้', _style('e', 10, SLATE))]
         return story
 
-    # เรียงประเภทเครื่องตามลำดับมาตรฐาน (MACHINE_ORDER) — นอกลิสต์ต่อท้ายตามจำนวน
-    cols = sorted([m for m in machines if m != UNSPEC_MACHINE],
-                  key=lambda m: (_machine_rank(m), -machines[m], m))
-    hue = {m: CAT[i % len(CAT)] for i, m in enumerate(cols)}
+    # all_types = ทุกประเภทในแค็ตตาล็อกมาตรฐานเสมอ (แม้จำนวน = 0 ก็คงลำดับไว้ ไม่ข้าม)
+    #             + ประเภทนอกแค็ตตาล็อกที่พบจริง (ต่อท้ายตามจำนวน)
+    catalog = [name for name, _ in MACHINE_ORDER]
+    extra   = sorted([m for m in machines if m != UNSPEC_MACHINE and m not in catalog],
+                     key=lambda m: (-machines[m], m))
+    all_types = catalog + extra
+    # สีผูกตามลำดับ (คงที่ ไม่ขึ้นกับว่าพบเครื่องหรือไม่)
+    hue = {m: CAT[i % len(CAT)] for i, m in enumerate(all_types)}
+    hue[UNSPEC_MACHINE] = NEUTRAL
+
+    # ตารางไขว้ (ข้อ 2) แสดงเฉพาะคอลัมน์ที่มีเครื่องจริง — เลี่ยงคอลัมน์ว่างเปล่า
+    cols = [m for m in all_types if machines.get(m)]
     if UNSPEC_MACHINE in machines:
         cols.append(UNSPEC_MACHINE)
-        hue[UNSPEC_MACHINE] = NEUTRAL
 
     grid = defaultdict(Counter)
     for r in rows:
@@ -261,26 +268,33 @@ def _story(rows, filter_labels, W):
               ['#', 'ประเภทเครื่อง (ชื่อในระบบ eDevice / ชื่อเต็ม)', 'จำนวน', 'สัดส่วน',
                'ค่าเช่า/เดือน', 'ตำแหน่งงานที่ใช้มากที่สุด (3 อันดับแรก)', 'BU หลัก']]
     m_body, m_style = [], []
-    top_n = max([machines[m] for m in cols if m != UNSPEC_MACHINE] or [1])
-    for i, m in enumerate(cols, 1):
+    # แสดงทุกประเภทในแค็ตตาล็อกเสมอ (จำนวน 0 ก็คงลำดับไว้) + แถวยังไม่ระบุท้ายสุด
+    summary_types = all_types + ([UNSPEC_MACHINE] if UNSPEC_MACHINE in machines else [])
+    top_n = max([machines[m] for m in all_types] or [1])
+    for i, m in enumerate(summary_types, 1):
         sub = [r for r in rows if _machine_of(r) == m]
         n   = len(sub)
         rank = _machine_rank(m)
         no   = str(rank + 1) if rank < len(MACHINE_ORDER) else '—'
         full = _full_name(m)
+        # แถวที่ไม่มีเครื่อง (0) และแถวยังไม่ระบุ → ใช้สีจาง
+        faded = (n == 0) or (m == UNSPEC_MACHINE)
         # ช่องแรก: ชื่อในระบบ (ตัวหนา) + ชื่อเต็มบรรทัดล่าง (สีจาง)
         name_cell = ('<b>%s</b>' % m) + ('<br/><font size="6" color="#94a3b8">%s</font>' % full if full else '')
-        bar = Table([['']], colWidths=[min(max(BAR * n / top_n, 1.2), BAR)], rowHeights=[5],
-                    style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(hue[m])),
-                                      ('LEFTPADDING', (0, 0), (-1, -1), 0),
-                                      ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+        if n:
+            bar = Table([['']], colWidths=[min(max(BAR * n / top_n, 1.2), BAR)], rowHeights=[5],
+                        style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(hue[m])),
+                                          ('LEFTPADDING', (0, 0), (-1, -1), 0),
+                                          ('RIGHTPADDING', (0, 0), (-1, -1), 0)]))
+        else:
+            bar = Paragraph('—', _style('bz', 7, colors.HexColor('#cbd5e1')))
         m_body.append([
-            Paragraph(no, _style('mno', 7.6, SLATE, bold=True, align=TA_CENTER)),
-            Paragraph(name_cell, _style('m', 7.4, INK if m != UNSPEC_MACHINE else MUTED, leading=8.6)),
-            Paragraph('{:,}'.format(n), _style('m', 8, INK, bold=True, align=TA_CENTER)),
+            Paragraph(no, _style('mno', 7.6, SLATE if not faded else MUTED, bold=True, align=TA_CENTER)),
+            Paragraph(name_cell, _style('m', 7.4, INK if not faded else MUTED, leading=8.6)),
+            Paragraph('{:,}'.format(n), _style('m', 8, INK if not faded else MUTED, bold=True, align=TA_CENTER)),
             bar,
-            Paragraph(_fmt_baht(sum(r.get('monthly_charge') or 0 for r in sub)),
-                      _style('m', 7.6, SLATE, align=TA_CENTER)),
+            Paragraph(_fmt_baht(sum(r.get('monthly_charge') or 0 for r in sub)) if n else '—',
+                      _style('m', 7.6, SLATE if not faded else MUTED, align=TA_CENTER)),
             Paragraph(' · '.join('%s (%d)' % (p, c) for p, c in
                                  Counter(_position_of(r) for r in sub).most_common(3)) or '—',
                       _style('m', 7.2, SLATE, leading=8.6)),
