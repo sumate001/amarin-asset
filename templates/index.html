@@ -161,7 +161,7 @@
         <option value="">ประเภทสัญญาทั้งหมด</option>
         <option value="เช่า">เช่า</option>
         <option value="ซื้อ">ซื้อ</option>
-        <option value="⚠">⚠ ไม่ตรงกัน</option>
+        <option value="⚠">⚠ ไม่ระบุ</option>
       </select>
       <select id="a-filter-machine"><option value="">ทุกประเภทเครื่อง</option></select>
       <select id="a-filter-status">
@@ -596,16 +596,23 @@
       </div>
     </div>
 
-    <!-- Expiry timeline -->
-    <div class="dash-panel" style="margin:16px 0">
-      <h3>📅 Timeline สัญญาหมดรายเดือน</h3>
-      <div id="r-timeline" style="overflow-x:auto;padding-bottom:4px"></div>
-      <div id="r-timeline-by-bu"></div>
+    <!-- Expiry timeline + no-timeline by BU -->
+    <div class="dash-row" style="margin:16px 0">
+      <div class="dash-panel">
+        <h3>📅 Timeline สัญญาหมดรายเดือน</h3>
+        <div id="r-timeline" style="overflow-x:auto;padding-bottom:4px"></div>
+        <div id="r-timeline-by-bu"></div>
+      </div>
+      <div class="dash-panel">
+        <h3>❔ เครื่องเช่าที่ไม่มีข้อมูลวันหมดสัญญา <span id="r-no-timeline-total" style="background:#fee2e2;color:#dc2626;font-size:.78rem;padding:3px 10px;border-radius:12px;font-weight:600"></span></h3>
+        <p style="font-size:.75rem;color:#94a3b8;margin:4px 0 10px">ไม่อยู่ใน Timeline เพราะจับคู่ข้อมูลสัญญา (Google Sheets) ไม่ได้ — เฉพาะ eDevice Active + Spare แยกตาม BU · คลิกแท่งเพื่อดูรายการเครื่อง</p>
+        <div id="r-no-timeline-bars"></div>
+      </div>
     </div>
 
     <!-- Urgent table -->
     <div class="dash-panel" style="margin:16px 0">
-      <h3>⚠️ เครื่องเช่าที่ต้องดำเนินการ (หมดแล้ว + &lt; 90 วัน)</h3>
+      <h3>⚠️ เครื่องเช่าที่ต้องดำเนินการ (หมดแล้ว + &lt; 90 วัน · เฉพาะ eDevice Active)</h3>
       <div id="r-urgent-wrap" style="overflow-x:auto">
         <table id="r-urgent-table" style="width:100%;border-collapse:collapse;font-size:.82rem">
           <thead>
@@ -718,7 +725,7 @@
     <!-- Anomaly panel 4: eDevice ไม่ระบุการถือครอง -->
     <div id="r-panel-needs-update" class="dash-panel anomaly-panel" style="margin:16px 0">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;cursor:pointer" onclick="toggleAnomalyPanel('r-panel-needs-update-detail')">
-        <h3 style="margin:0">✎ เครื่องที่ยังไม่ได้ระบุ เช่า/ซื้อ ใน eDevice</h3>
+        <h3 style="margin:0">✎ เครื่องที่ยังไม่ได้ระบุ เช่า/ซื้อ ใน eDevice (เฉพาะ Active)</h3>
         <span id="r-needs-update-count" style="background:#fff7ed;color:#c2410c;font-size:.78rem;padding:3px 10px;border-radius:12px;font-weight:600"></span>
       </div>
       <p style="font-size:.78rem;color:#94a3b8;margin:0 0 12px">

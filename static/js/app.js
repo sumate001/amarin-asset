@@ -104,6 +104,36 @@ function _anomalyRow(a, opts = {}) {
   return `<tr style="border-bottom:1px solid #f1f5f9;${rowBg}">${cols}</tr>`;
 }
 
+// toggle รายการเครื่องใต้แท่ง BU ในการ์ด "ไม่มีข้อมูลวันหมดสัญญา"
+function toggleNoTimelineDetail(buCode, safeId) {
+  const el = document.getElementById(`ntl-detail-${safeId}`);
+  if (!el) return;
+  if (el.style.display !== 'none') { el.style.display = 'none'; return; }
+  const items = (window._ntlByBu || {})[buCode] || [];
+  const th = 'padding:4px 8px;text-align:left;color:#94a3b8;font-size:.7rem;font-weight:600';
+  const td = 'padding:4px 8px;font-size:.75rem';
+  el.innerHTML = `
+    <div style="border:1px solid #e2e8f0;border-radius:8px;background:#fafafa;max-height:260px;overflow:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="border-bottom:1px solid #e2e8f0">
+          <th style="${th}">รหัสเครื่อง</th>
+          <th style="${th}">Serial No.</th>
+          <th style="${th}">รุ่น</th>
+          <th style="${th}">ผู้ถือครอง</th>
+          <th style="${th};text-align:center">eDevice</th>
+        </tr></thead>
+        <tbody>${items.map(a => `<tr style="border-bottom:1px solid #f1f5f9">
+          <td style="${td}"><code style="font-size:.75rem;color:#334155">${esc(a.computer_id) || esc(a.asset_no) || '—'}</code></td>
+          <td style="${td};font-family:monospace;color:#64748b">${esc(a.serial_no) || '—'}</td>
+          <td style="${td};max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.model)||''}">${esc(a.model) || '—'}</td>
+          <td style="${td};max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.user_name)||''}">${esc(a.user_name) || '—'}</td>
+          <td style="${td};text-align:center">${_edBadge(a.edevice_status)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>`;
+  el.style.display = '';
+}
+
 // ---- State ----
 let currentPage = 1;
 let totalPages  = 1;
@@ -1595,6 +1625,27 @@ async function loadRentalDashboard() {
   // เก็บ rentalIndex ไว้ให้ toggleTimelineExpand ใช้
   window._tlRentalIndex = rentalIndex;
 
+  // การ์ดคู่ timeline: เครื่องเช่าที่ไม่มีข้อมูลวันหมดสัญญา แยก BU
+  const ntl = d.no_timeline_by_bu || [];
+  const ntlTotal = ntl.reduce((s, b) => s + b.count, 0);
+  document.getElementById('r-no-timeline-total').textContent = `${ntlTotal.toLocaleString()} เครื่อง`;
+  const maxNtl = Math.max(...ntl.map(b => b.count), 1);
+  window._ntlByBu = {};
+  ntl.forEach(b => { window._ntlByBu[b.bu_code] = b.items || []; });
+  document.getElementById('r-no-timeline-bars').innerHTML = ntl.length
+    ? ntl.map(b => {
+        const buLabel = b.bu_code === '—' ? 'ไม่ระบุ BU' : b.bu_code;
+        const color = BU_COLOR[b.bu_code] || '#94a3b8';
+        const safeId = b.bu_code.replace(/[^a-zA-Z0-9]/g,'_');
+        return `<div class="bar-row" style="margin-bottom:6px;cursor:pointer" onclick="toggleNoTimelineDetail('${esc(b.bu_code)}','${safeId}')" title="คลิกเพื่อดูรายการเครื่อง">
+          <div class="bar-label" style="width:110px;min-width:110px;text-align:right;font-weight:600;color:${color}">${esc(buLabel)} ▾</div>
+          <div class="bar-track" style="flex:1"><div class="bar-fill" style="width:${(b.count/maxNtl*100).toFixed(1)}%;background:${color}"></div></div>
+          <div class="bar-count" style="min-width:36px">${b.count}</div>
+        </div>
+        <div id="ntl-detail-${safeId}" style="display:none;margin:2px 0 10px 116px"></div>`;
+      }).join('')
+    : '<div style="text-align:center;padding:24px;color:#16a34a;font-size:.82rem">✓ ทุกเครื่องมีข้อมูลวันหมดสัญญาครบ</div>';
+
   // Urgent table
   const tbody = document.getElementById('r-urgent-tbody');
   const empty = document.getElementById('r-urgent-empty');
@@ -1688,13 +1739,13 @@ async function loadRentalDashboard() {
 
   // ---- Anomaly panel 3: ยังไม่บันทึกใน eDevice ----
   const me = d.missing_edevice || [];
-  document.getElementById('r-missing-edevice-head').innerHTML = _anomalyHead(false);
+  document.getElementById('r-missing-edevice-head').innerHTML = _anomalyHead(true);
   document.getElementById('r-missing-edevice-badge').textContent = me.length.toLocaleString();
   document.getElementById('r-missing-edevice-count').textContent =
     me.length ? `${me.length} เครื่อง ⚠️` : '0 เครื่อง ✓';
   document.getElementById('r-missing-edevice-tbody').innerHTML = me.length
-    ? me.map(a => _anomalyRow(a, {showEdStatus: false})).join('')
-    : '<tr><td colspan="13" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ ทุกเครื่องมีข้อมูลใน eDevice ครบแล้ว</td></tr>';
+    ? me.map(a => _anomalyRow(a)).join('')
+    : '<tr><td colspan="14" style="text-align:center;padding:16px;color:#16a34a;font-size:.82rem">✓ ทุกเครื่องมีข้อมูลใน eDevice ครบแล้ว</td></tr>';
 
   // ---- Anomaly panel 4: eDevice ไม่ระบุการถือครอง (ownership_needs_update) ----
   const nu = d.needs_update || [];

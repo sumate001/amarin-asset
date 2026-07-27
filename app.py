@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, send_file
 import sqlite3, json, io, os, re, csv, time
 from datetime import datetime, date
 import requests as req_lib
+from report_pdf import _machine_rank, MACHINE_ORDER
 
 app = Flask(__name__)
 DB = os.path.join(os.path.dirname(__file__), 'employees.db')
@@ -739,6 +740,18 @@ def fetch_assets_raw(force=False):
     return results
 
 
+def _infer_mac_machine(r):
+    """อนุมานประเภทเครื่อง Macbook/iMac จากช่องรุ่น (เกณฑ์เดียวกับ report_pdf)
+    ใช้กับเครื่องที่ eDevice ยังไม่ระบุ machine_type — คืน '' ถ้าไม่ใช่ Mac"""
+    text = ('%s %s %s' % (r.get('model') or '', r.get('brand') or '',
+                          r.get('asset_type') or '')).lower()
+    if 'imac' in text:
+        return 'iMac'
+    if 'macbook' in text or 'mac book' in text:
+        return 'Macbook'
+    return ''
+
+
 def _apply_asset_filters(rows, args):
     """กรอง asset ตาม query params — ใช้ร่วมกันระหว่าง /api/assets และ report PDF
     เพื่อให้รายงานได้ข้อมูลชุดเดียวกับที่แสดงบนหน้าจอเป๊ะ ๆ
@@ -772,11 +785,28 @@ def _apply_asset_filters(rows, args):
     if bu_f:
         rows = [r for r in rows if r['emp_bu_code'] == bu_f]
     if ownership_f:
-        rows = [r for r in rows if r.get('ownership') == ownership_f]
+        # ต้องกรองตามที่ badge แสดงจริง (ownershipBadge ใน app.js) ไม่ใช่ค่า ownership ดิบ
+        # เพราะเครื่องที่ eDevice ไม่ระบุ เช่า/ซื้อ จะถูก infer ownership='เช่า' ไว้
+        # แต่หน้าเว็บแสดงเป็น "ไม่ระบุ" เมื่อไม่มี Sheets ยืนยัน
+        def _ownership_display(r):
+            if r.get('ownership') == 'ซื้อ':
+                return 'ซื้อ'
+            if r.get('ownership') == 'เช่า' and not r.get('ownership_needs_update'):
+                return 'เช่า'
+            if r.get('ownership_needs_update') and r.get('sheets_matched'):
+                return 'เช่า'
+            return '⚠'
+        rows = [r for r in rows if _ownership_display(r) == ownership_f]
     if machine_f:
-        # '-' = เครื่องที่ eDevice ยังไม่ระบุประเภทเครื่อง
+        # '-' = เครื่องที่ eDevice ยังไม่ระบุประเภทเครื่อง (และไม่ใช่ Mac ที่อนุมานได้)
         if machine_f == '-':
-            rows = [r for r in rows if not (r.get('machine_type') or '').strip()]
+            rows = [r for r in rows
+                    if not (r.get('machine_type') or '').strip()
+                    and not _infer_mac_machine(r)]
+        elif machine_f in ('Macbook', 'iMac'):
+            # Macbook/iMac กรองจากช่องรุ่น (machine_type ใน eDevice มักว่าง)
+            rows = [r for r in rows
+                    if ((r.get('machine_type') or '').strip() or _infer_mac_machine(r)) == machine_f]
         else:
             rows = [r for r in rows if (r.get('machine_type') or '').strip() == machine_f]
     if ed_status_f:
@@ -1048,9 +1078,33 @@ def dashboard_rental():
         key=lambda x: x['month']
     )
 
-    # urgent: expired + critical (เรียงวันหมดก่อน)
+    # no_timeline_by_bu: เครื่องเช่าที่ไม่มีวันหมดสัญญา (ไม่อยู่ใน timeline) แยกตาม BU
+    # เฉพาะ eDevice = Active/Spare (spare ไม่อยู่ใน rentals จึงต้องวนจาก data ตรงๆ)
+    no_tl_bu = defaultdict(list)
+    for r in data:
+        if (is_rental(r)
+                and r['contract_status'] != 'returned'
+                and r.get('resolution', 'pending') not in RESOLVED
+                and (r.get('edevice_status') or '').lower() in ('active', 'spare')
+                and not r['end_date']):
+            no_tl_bu[r['emp_bu_code'] or '—'].append({
+                'asset_no':       r['asset_no'],
+                'computer_id':    r['computer_id'],
+                'serial_no':      r['serial_no'],
+                'model':          r['model'],
+                'edevice_status': r.get('edevice_status', ''),
+                'user_name':      r['user_name'],
+            })
+    no_timeline_by_bu = sorted(
+        [{'bu_code': k, 'count': len(v), 'items': v} for k, v in no_tl_bu.items()],
+        key=lambda x: -x['count']
+    )
+
+    # urgent: expired + critical เฉพาะเครื่องที่ eDevice = Active (เรียงวันหมดก่อน)
     urgent = sorted(
-        [r for r in rentals if r['contract_status'] in ('expired', 'critical')],
+        [r for r in rentals
+         if r['contract_status'] in ('expired', 'critical')
+         and (r.get('edevice_status') or '').lower() == 'active'],
         key=lambda x: (x['days_remaining'] is None, x['days_remaining'] or 0)
     )
     urgent_out = [{
@@ -1163,7 +1217,10 @@ def dashboard_rental():
     missing_edevice.sort(key=lambda x: (x['emp_bu_code'] or '่', x['emp_dept'] or '่'))
 
     # ---- anomaly: eDevice ไม่ระบุการถือครอง (ownership_needs_update) ----
-    needs_update = [_mini(r) for r in all_assets if r.get('ownership_needs_update')]
+    # เฉพาะเครื่องที่ eDevice = Active
+    needs_update = [_mini(r) for r in all_assets
+                    if r.get('ownership_needs_update')
+                    and (r.get('edevice_status') or '').lower() == 'active']
     needs_update.sort(key=lambda x: (x['emp_bu_code'] or '่', x['emp_dept'] or '่'))
 
     return jsonify({
@@ -1175,6 +1232,7 @@ def dashboard_rental():
         'timeline':       timeline,
         'timeline_by_bu': timeline_by_bu,
         'rental_index':   dict(rental_index),
+        'no_timeline_by_bu': no_timeline_by_bu,
         'urgent':         urgent_out,
         'no_contract':    no_contract,
         'no_bu':          no_bu,
@@ -1201,7 +1259,7 @@ def asset_meta():
         t = r['asset_type']
         if t:
             types.add(_TYPE_NORM.get(t.lower(), t))
-        m = (r.get('machine_type') or '').strip()
+        m = (r.get('machine_type') or '').strip() or _infer_mac_machine(r)
         if m:
             machines.add(m)
         p = r.get('emp_position', '')
@@ -1213,7 +1271,10 @@ def asset_meta():
     return jsonify({
         'customers':  [{'code': k, 'name': v} for k, v in customers.items()],
         'types':      sorted(types),
-        'machine_types': sorted(machines),
+        # แสดงครบทุกลำดับแค็ตตาล็อก (1-9) เสมอแม้ไม่มีเครื่อง เหมือนข้อ 1 ในรายงาน
+        # เรียงตามลำดับเดียวกับรายงาน PDF — Macbook #8, iMac #9; นอกลิสต์ต่อท้าย
+        'machine_types': sorted(machines | {k for k, _ in MACHINE_ORDER},
+                                key=lambda m: (_machine_rank(m), m)),
         'positions':  sorted(positions),
         'depts':      sorted(depts),
     })
