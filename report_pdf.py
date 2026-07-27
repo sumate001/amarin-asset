@@ -1,4 +1,4 @@
-"""สร้างรายงาน PDF การใช้งานเครื่อง IT — ประเภทเครื่อง × ตำแหน่งงาน (หน้าเดียว)
+"""สร้างรายงาน PDF การใช้งานเครื่อง IT — ประเภทเครื่อง × ตำแหน่งงาน × รุ่นเครื่อง
 
 ใช้ฟอนต์ Sarabun (OFL) ที่ bundle มาใน static/fonts เพราะเครื่อง server
 ไม่มีฟอนต์ไทยติดตั้งไว้ — ถ้าไม่ embed ตัวอักษรไทยจะกลายเป็นสี่เหลี่ยม
@@ -137,8 +137,21 @@ def _position_of(r):
     return (r.get('emp_position') or '').strip() or UNSPEC_POSITION
 
 
-def _fmt_baht(n):
-    return '฿{:,.0f}'.format(n or 0)
+UNSPEC_MODEL = '(ไม่ระบุรุ่น)'
+_NULL_MODEL  = {'-', '--', '—', 'n/a', 'na', 'none', 'null', 'mixed', '.'}
+
+
+def _model_of(r):
+    """ชื่อรุ่นเครื่อง — eDevice เก็บไว้ในช่อง 'รุ่น' (brand) เช่น 'Dell Latitude 3550'
+    ส่วน model มาจาก Sheets ใช้เป็นตัวสำรองเมื่อไม่มีข้อมูลฝั่ง eDevice"""
+    s = ' '.join(((r.get('brand') or '').strip() or (r.get('model') or '').strip()).split())
+    return UNSPEC_MODEL if not s or s.lower() in _NULL_MODEL else s
+
+
+def _esc(s):
+    return (s or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -198,7 +211,6 @@ def _heading(num, title, note):
 
 def _story(rows, filter_labels, W):
     total    = len(rows)
-    monthly  = sum(r.get('monthly_charge') or 0 for r in rows)
     machines = Counter(_machine_of(r) for r in rows)
     spec_cnt = total - machines.get(UNSPEC_MACHINE, 0)
     n_pos    = len({_position_of(r) for r in rows})
@@ -228,7 +240,6 @@ def _story(rows, filter_labels, W):
 
     # ── KPI ──────────────────────────────────────────────────────
     kpis = [('เครื่องทั้งหมด', '{:,}'.format(total), CAT[0]),
-            ('ค่าเช่ารวม / เดือน', _fmt_baht(monthly), CAT[2]),
             ('ระบุประเภทเครื่องแล้ว', '{:,} ({:.1f}%)'.format(spec_cnt, pct),
              CAT[1] if pct < 50 else CAT[5]),
             ('ประเภทเครื่องที่พบ',
@@ -284,7 +295,7 @@ def _story(rows, filter_labels, W):
     BAR = W * .13
     m_head = [Paragraph(t, hdr_d) for t in
               ['#', 'ประเภทเครื่อง (ชื่อในระบบ eDevice / ชื่อเต็ม)', 'จำนวน', 'สัดส่วน',
-               'ค่าเช่า/เดือน', 'ตำแหน่งงานที่ใช้มากที่สุด (3 อันดับแรก)', 'BU หลัก']]
+               'ตำแหน่งงานที่ใช้มากที่สุด (3 อันดับแรก)', 'BU หลัก']]
     m_body, m_style = [], []
     # แสดงทุกประเภทในแค็ตตาล็อกเสมอ (จำนวน 0 ก็คงลำดับไว้) + แถวยังไม่ระบุท้ายสุด
     summary_types = all_types + ([UNSPEC_MACHINE] if UNSPEC_MACHINE in machines else [])
@@ -311,8 +322,6 @@ def _story(rows, filter_labels, W):
             Paragraph(name_cell, _style('m', 7.4, INK if not faded else MUTED, leading=8.6)),
             Paragraph('{:,}'.format(n), _style('m', 8, INK if not faded else MUTED, bold=True, align=TA_CENTER)),
             bar,
-            Paragraph(_fmt_baht(sum(r.get('monthly_charge') or 0 for r in sub)) if n else '—',
-                      _style('m', 7.6, SLATE if not faded else MUTED, align=TA_CENTER)),
             Paragraph(' · '.join('%s (%d)' % (p, c) for p, c in
                                  Counter(_position_of(r) for r in sub).most_common(3)) or '—',
                       _style('m', 7.2, SLATE, leading=8.6)),
@@ -322,8 +331,8 @@ def _story(rows, filter_labels, W):
         ])
         m_style.append(('LINEBEFORE', (1, i), (1, i), 2.5, colors.HexColor(hue[m])))
     mt = Table([m_head] + m_body,
-               colWidths=[W * .035, W * .275, W * .06, BAR, W * .10, W * .29,
-                          W - (W * .76) - BAR],
+               colWidths=[W * .035, W * .275, W * .06, BAR, W * .35,
+                          W - (W * .72) - BAR],
                repeatRows=1)
     mt.setStyle(TableStyle(m_style + [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f1f5f9')),
@@ -421,6 +430,86 @@ def _story(rows, filter_labels, W):
               _heading('2.', 'ตำแหน่งงาน × ประเภทเครื่อง (ทุกตำแหน่ง)',
                        'เรียงตามจำนวนเครื่องที่ระบุประเภทแล้ว · ยิ่งเข้ม = ยิ่งมาก · · คือไม่มี'),
               Spacer(1, 1.5 * mm), xt]
+
+    # ══ 3. รุ่นเครื่องในแต่ละประเภท ═══════════════════════════════
+    # จัดรุ่นเป็น 3 คอลัมน์ต่อบรรทัด (หน้าแนวนอนกว้าง) เรียงจากรุ่นที่มีมากไปน้อย
+    NCOL, TOP_MODELS = 3, 15
+    pair_w  = W / NCOL
+    col_ws  = [pair_w * .74, pair_w * .26] * NCOL
+
+    by_type = defaultdict(list)
+    for r in rows:
+        by_type[_machine_of(r)].append(_model_of(r))
+
+    story += [Spacer(1, 5 * mm),
+              _heading('3.', 'รุ่นเครื่องในแต่ละประเภท',
+                       'ชื่อรุ่นตามที่บันทึกใน eDevice · เรียงจากรุ่นที่มีมากที่สุด · '
+                       'เกิน %d รุ่นยุบเป็นบรรทัดเดียว' % TOP_MODELS),
+              Spacer(1, 1.5 * mm)]
+
+    for m in summary_types:
+        items = by_type.get(m) or []
+        n_all = len(items)
+        # รวมรุ่นที่สะกดต่างกันแค่ตัวพิมพ์เล็ก/ใหญ่ (OptiPlex vs Optiplex) เข้าด้วยกัน
+        variants = defaultdict(Counter)
+        for s in items:
+            variants[s.lower()][s] += 1
+        models = sorted(((v.most_common(1)[0][0], sum(v.values())) for v in variants.values()),
+                        key=lambda t: (t[0] == UNSPEC_MODEL, -t[1], t[0]))
+        shown, restm = models[:TOP_MODELS], models[TOP_MODELS:]
+
+        # ประเภทที่ยังไม่มีเครื่องก็แสดงหัวข้อไว้ — คงลำดับ 1-9 ให้ครบเหมือนข้อ 1
+        faded = (m == UNSPEC_MACHINE) or not n_all
+        c_hex = hue[m]
+        rank  = _machine_rank(m)
+        no    = '%d.' % (rank + 1) if rank < len(MACHINE_ORDER) else '•'
+        head_txt = ('<b>%s %s</b>&nbsp;&nbsp;<font size="7" color="#475569">%s</font>'
+                    % (no, _esc(m),
+                       'รวม {:,} เครื่อง · {:,} รุ่น'.format(n_all, len(models)) if n_all
+                       else 'ยังไม่มีเครื่องในประเภทนี้'))
+        g_rows = [[Paragraph(head_txt, _style('g', 8.4, colors.HexColor(c_hex) if not faded else SLATE,
+                                              leading=10))] + [''] * (NCOL * 2 - 1)]
+
+        cells = []
+        for name, n in shown:
+            unspec = (name == UNSPEC_MODEL)
+            cells.append([
+                Paragraph(_esc(name), _style('mn', 7.2, INK if not (faded or unspec) else MUTED,
+                                             leading=8.4)),
+                Paragraph('<b>{:,}</b>&nbsp;<font size="5.5" color="#94a3b8">{:.0f}%</font>'
+                          .format(n, n / n_all * 100),
+                          _style('mc', 7.6, colors.HexColor(c_hex) if not faded else SLATE)),
+            ])
+        if restm:
+            cells.append([
+                Paragraph('อื่น ๆ อีก %d รุ่น' % len(restm), _style('mo', 7, MUTED, leading=8.4)),
+                Paragraph('{:,}'.format(sum(n for _, n in restm)), _style('mc', 7.2, MUTED)),
+            ])
+        while len(cells) % NCOL:
+            cells.append(['', ''])
+        for i in range(0, len(cells), NCOL):
+            line = []
+            for pair in cells[i:i + NCOL]:
+                line += pair
+            g_rows.append(line)
+
+        gt = Table(g_rows, colWidths=col_ws, repeatRows=1)
+        gs = [('SPAN', (0, 0), (-1, 0)),
+              ('BACKGROUND', (0, 0), (-1, 0), _tint(c_hex, .16) if not faded
+               else colors.HexColor('#f1f5f9')),
+              ('LINEBEFORE', (0, 0), (0, -1), 2.5, colors.HexColor(c_hex)),
+              ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+              ('TOPPADDING', (0, 0), (-1, -1), 2.2),
+              ('BOTTOMPADDING', (0, 0), (-1, -1), 2.2),
+              ('LEFTPADDING', (0, 0), (-1, -1), 5)]
+        if len(g_rows) > 1:
+            gs += [('ROWBACKGROUNDS', (0, 1), (-1, -1), [WHITE, colors.HexColor('#fafcff')]),
+                   ('ALIGN', (1, 1), (-1, -1), 'RIGHT')]
+            for k in range(1, NCOL):
+                gs.append(('LINEBEFORE', (k * 2, 1), (k * 2, -1), 0.4, LINE))
+        gt.setStyle(TableStyle(gs))
+        story += [gt, Spacer(1, 2.5 * mm)]
+
     return story
 
 
@@ -428,6 +517,7 @@ def build_asset_report(rows, filter_labels):
     """rows = asset dict ที่ผ่าน filter แล้ว
 
     ข้อ 1 = สรุปรายประเภทเครื่อง · ข้อ 2 = ตารางไขว้ตำแหน่งงาน × ประเภทเครื่อง
+    ข้อ 3 = รุ่นเครื่องที่พบในแต่ละประเภท
     (แสดงทุกตำแหน่ง — กี่หน้าก็ได้ ตารางแตกหน้าเองพร้อมหัวตารางซ้ำ)
     """
     _ensure_fonts()
