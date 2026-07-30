@@ -303,6 +303,53 @@ def _spec_bus():
     return [dict(r) for r in rows]
 
 
+def _spec_rental_history():
+    """รุ่นเครื่องที่เคยเช่ามาในอดีต แยกตาม ประเภทเครื่อง × BU
+    → { machine_type: { bu_code: [{model, count, last_end}, ...] } }
+    เรียงจำนวนมาก→น้อย เพื่อใช้อ้างอิงตอนกำหนดคุณสมบัติรุ่นใหม่"""
+    canon = {_norm_machine(name): name for name, _ in MACHINE_ORDER}
+    agg   = {}   # (machine_type, bu_code, model) → {count, last_end, charges}
+
+    for r in fetch_assets_raw():
+        if r.get('ownership') != 'เช่า':
+            continue
+        mt = canon.get(_norm_machine((r.get('machine_type') or '').strip()
+                                     or _infer_mac_machine(r)))
+        bu = (r.get('emp_bu_code') or '').strip()
+        md = ' '.join(((r.get('model') or '') or (r.get('brand') or '')).split())
+        if not (mt and bu and md):
+            continue
+        cell = agg.setdefault((mt, bu, md), {'count': 0, 'last_end': '', 'charges': []})
+        cell['count'] += 1
+        end = r.get('end_date') or ''
+        if end > cell['last_end']:
+            cell['last_end'] = end
+        # ค่าเช่า/เดือน เป็นราคาต่อเครื่อง และปกติเท่ากันทุกเครื่องในรุ่นเดียวกัน
+        # เครื่องที่ Sheets ไม่มีตัวเลข (คืนแล้ว/สัญญาเก่า) = 0 → ไม่นับในค่าเฉลี่ย
+        # ไม่งั้นจะฉุดราคาต่อเครื่องให้ต่ำกว่าจริง
+        if r.get('monthly_charge'):
+            cell['charges'].append(r['monthly_charge'])
+
+    out = {}
+    for (mt, bu, md), c in agg.items():
+        ch = c['charges']
+        out.setdefault(mt, {}).setdefault(bu, []).append({
+            'model':    md,
+            'count':    c['count'],
+            'last_end': c['last_end'],
+            # ต่อเครื่อง/เดือน (เฉลี่ยจากเครื่องที่มีตัวเลข) — None = ไม่มีข้อมูลค่าเช่าเลย
+            'monthly':       round(sum(ch) / len(ch)) if ch else None,
+            'monthly_min':   round(min(ch)) if ch else None,
+            'monthly_max':   round(max(ch)) if ch else None,
+            'monthly_known': len(ch),          # กี่เครื่องที่รู้ค่าเช่า (จาก count ทั้งหมด)
+            'monthly_total': round(sum(ch)) if ch else None,
+        })
+    for by_bu in out.values():
+        for lst in by_bu.values():
+            lst.sort(key=lambda x: (-x['count'], x['model']))
+    return out
+
+
 @app.route('/api/machine-specs', methods=['GET'])
 def get_machine_specs():
     """คุณสมบัติที่แต่ละ BU กำหนดไว้ ของทุกประเภทเครื่องในแค็ตตาล็อก (1-9)"""
@@ -316,11 +363,18 @@ def get_machine_specs():
             'spec': r['spec'] or '', 'updated_at': r['updated_at']
         }
 
+    # ประวัติรุ่นที่เคยเช่า — ถ้าโหลด asset ไม่ได้ ก็ยังต้องกรอก spec ได้ตามปกติ
+    try:
+        history = _spec_rental_history()
+    except Exception:
+        history = {}
+
     return jsonify({
         'types': [{'no': i + 1, 'name': name, 'full_name': full}
                   for i, (name, full) in enumerate(MACHINE_ORDER)],
-        'bus':   _spec_bus(),
-        'specs': specs,
+        'bus':     _spec_bus(),
+        'specs':   specs,
+        'history': history,
     })
 
 

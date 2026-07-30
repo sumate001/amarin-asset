@@ -2075,35 +2075,90 @@ function specVisibleBus() {
   return f ? specsData.bus.filter(b => b.bu_code === f) : specsData.bus;
 }
 
+function _baht(n) {
+  return n == null ? '—' : Math.round(n).toLocaleString('en-US');
+}
+
+/** รุ่นที่ BU นี้เคยเช่ามาในอดีต สำหรับประเภทเครื่องนี้ — ใช้อ้างอิงตอนกำหนด spec
+ *  ความสูงกล่องตั้งจาก equalizeSpecHistHeights() ให้เท่ากันในบรรทัดเดียวกัน
+ *  เพื่อให้ textarea ด้านล่างเรียงตรงกันเทียบด้วยตาได้ */
+function specHistoryHtml(mt, buCode) {
+  const list = specsData.history?.[mt]?.[buCode] || [];
+  if (!list.length) {
+    return `<div class="spec-hist"><div class="spec-hist-none">— ไม่เคยเช่าประเภทนี้ —</div></div>`;
+  }
+
+  const total    = list.reduce((n, h) => n + h.count, 0);
+  const sumMonth = list.reduce((n, h) => n + (h.monthly_total || 0), 0);
+
+  const chips = list.map(h => {
+    const tip = [
+      esc(h.model),
+      `${h.count} เครื่อง`,
+      h.monthly == null
+        ? 'ไม่มีข้อมูลค่าเช่า'
+        : `ค่าเช่า ${_baht(h.monthly)}/เครื่อง/เดือน` +
+          (h.monthly_min !== h.monthly_max ? ` (${_baht(h.monthly_min)}-${_baht(h.monthly_max)})` : '') +
+          (h.monthly_known < h.count ? ` · มีตัวเลข ${h.monthly_known}/${h.count} เครื่อง` : '') +
+          ` · รวม ${_baht(h.monthly_total)}/เดือน`,
+      h.last_end ? `สัญญาหมดล่าสุด ${esc(h.last_end)}` : '',
+    ].filter(Boolean).join('\n');
+
+    return `
+      <span class="spec-hist-chip" title="${tip}">
+        <span class="spec-hist-model">${esc(h.model)}</span>
+        <span class="spec-hist-rate ${h.monthly == null ? 'na' : ''}">${
+          h.monthly == null ? '—' : _baht(h.monthly)}</span>
+        <span class="spec-hist-count">${h.count}</span>
+      </span>`;
+  }).join('');
+
+  return `
+    <div class="spec-hist">
+      <div class="spec-hist-label">รุ่นที่เคยเช่า <span>${list.length} รุ่น · ${total} เครื่อง${
+        sumMonth ? ' · ' + _baht(sumMonth) + '/ด.' : ''}</span></div>
+      <div class="spec-hist-sub">
+        <span>รุ่น</span><span>฿/เครื่อง/ด.</span><span>จำนวน</span>
+      </div>
+      <div class="spec-hist-chips">${chips}</div>
+    </div>`;
+}
+
+// จำนวนคอลัมน์ต่อบรรทัด — 7 BU จะตกเป็น 3 บรรทัด (3+3+1) ไม่แน่นและไม่ต้องเลื่อนแนวนอน
+const SPEC_COLS_PER_ROW = 3;
+
 function renderMachineSpecs() {
-  const bus = specVisibleBus();
+  const bus  = specVisibleBus();
+  const nCol = Math.min(SPEC_COLS_PER_ROW, bus.length);
 
   document.getElementById('spec-list').innerHTML = specsData.types.map(t => {
     const filled = bus.filter(b => specValue(t.name, b.bu_code).trim()).length;
     const isDirty = bus.some(b => specDirty.has(specKey(t.name, b.bu_code)));
 
-    // แต่ละ BU = 1 คอลัมน์ เรียงข้างกัน เพื่อเทียบคุณสมบัติด้วยตาได้ทันที
+    // แต่ละ BU = 1 คอลัมน์ ตกบรรทัดละ 3 คอลัมน์ — ใน 1 บรรทัดเทียบคุณสมบัติด้วยตาได้ทันที
     const cols = bus.map(b => {
       const cur   = specValue(t.name, b.bu_code);
       const dirty = specDirty.has(specKey(t.name, b.bu_code));
       const meta  = specsData.specs?.[t.name]?.[b.bu_code];
       return `
-        <div class="spec-bu-col ${dirty ? 'dirty' : ''}">
+        <div class="spec-bu-col bu-c-${esc(b.bu_code)} ${dirty ? 'dirty' : ''}">
           <div class="spec-bu-head">
             <span class="bu-badge bu-${esc(b.bu_code)}">${esc(b.bu_code)}</span>
             <span class="spec-bu-name">${esc(b.bu)}</span>
           </div>
-          <textarea rows="8" class="${dirty ? 'dirty' : ''}"
+          ${specHistoryHtml(t.name, b.bu_code)}
+          <div class="spec-input-label">✎ คุณสมบัติที่จะ เช่า/ซื้อ ปีนี้</div>
+          <textarea rows="6" class="${dirty ? 'dirty' : ''}"
                     data-mt="${esc(t.name)}" data-bu="${esc(b.bu_code)}"
                     oninput="onSpecInput(this)"
-                    placeholder="คุณสมบัติที่ ${esc(b.bu_code)} กำหนด เช่น\nCPU\nRAM\nStorage\nจอ\nระบบปฏิบัติการ">${esc(cur)}</textarea>
+                    placeholder="ระบุคุณสมบัติที่ ${esc(b.bu_code)} ต้องการ เช่น\nCPU\nRAM\nStorage\nจอ\nระบบปฏิบัติการ">${esc(cur)}</textarea>
           <div class="spec-bu-updated">${dirty ? '● ยังไม่บันทึก'
                                       : meta?.updated_at ? 'บันทึก ' + esc(meta.updated_at) : '—'}</div>
         </div>`;
     }).join('');
 
     return `
-      <div class="spec-card ${specClosed.has(t.name) ? 'collapsed' : ''} ${isDirty ? 'dirty' : ''}"
+      <div class="spec-card mt-${t.no} ${specClosed.has(t.name) ? 'collapsed' : ''} ${isDirty ? 'dirty' : ''}"
            data-mt="${esc(t.name)}">
         <div class="spec-card-head" onclick="toggleSpecCard(this)">
           <div class="spec-no">${t.no}</div>
@@ -2115,8 +2170,8 @@ function renderMachineSpecs() {
           <span class="spec-caret">▼</span>
         </div>
         <div class="spec-card-body">
-          <div class="spec-bu-grid"
-               style="grid-template-columns:repeat(${bus.length},minmax(230px,1fr));min-width:${bus.length * 230 + (bus.length - 1) * 12}px">
+          <div class="spec-bu-grid" data-cols="${nCol}"
+               style="grid-template-columns:repeat(${nCol},minmax(0,1fr));min-width:${nCol * 250 + (nCol - 1) * 12}px">
             ${cols}
           </div>
         </div>
@@ -2128,7 +2183,30 @@ function renderMachineSpecs() {
       </div>`;
   }).join('');
 
+  equalizeSpecHistHeights();
   updateSpecDirtyInfo();
+}
+
+/** กล่อง "รุ่นที่เคยเช่า" สูงพอดีเนื้อหา ไม่ต้องมีแถบเลื่อนในกล่อง
+ *  เท่ากัน "ต่อบรรทัด" (ทีละ nCol คอลัมน์) ไม่ใช่ทั้งการ์ด — พอให้ช่องกรอกใน
+ *  บรรทัดเดียวกันเริ่มระดับเดียวกัน โดยไม่ลากบรรทัดอื่นให้สูงตาม BU ที่มีรุ่นเยอะ
+ *  วัดจาก DOM จริงแทนคำนวณพิกเซล — ไม่ต้องแก้ตามเมื่อขนาดฟอนต์เปลี่ยน
+ *  ใช้ getBoundingClientRect ไม่ใช่ scrollHeight เพราะ box-sizing:border-box ทั้งโปรเจกต์
+ *  (scrollHeight ไม่นับเส้นขอบ → ตั้ง height เท่านั้นจะล้น 2px แล้วขึ้นแถบเลื่อน) */
+function equalizeSpecHistHeights(card) {
+  const cards = card ? [card] : document.querySelectorAll('.spec-card');
+  cards.forEach(c => {
+    if (c.classList.contains('collapsed')) return;   // วัดไม่ได้ตอนย่อ — ไว้วัดตอนกาง
+    const grid  = c.querySelector('.spec-bu-grid');
+    const nCol  = Math.max(1, +grid.dataset.cols || 1);
+    const boxes = [...c.querySelectorAll('.spec-hist')];
+    boxes.forEach(b => { b.style.height = 'auto'; });
+    for (let i = 0; i < boxes.length; i += nCol) {
+      const band = boxes.slice(i, i + nCol);
+      const max  = Math.max(...band.map(b => b.getBoundingClientRect().height));
+      band.forEach(b => { b.style.height = Math.ceil(max) + 'px'; });
+    }
+  });
 }
 
 function onSpecInput(el) {
@@ -2157,12 +2235,14 @@ function toggleSpecCard(headEl) {
   const mt   = card.dataset.mt;
   if (specClosed.has(mt)) specClosed.delete(mt); else specClosed.add(mt);
   card.classList.toggle('collapsed', specClosed.has(mt));
+  equalizeSpecHistHeights(card);
 }
 
 function toggleAllSpecCards(open) {
   specClosed.clear();
   if (!open) specsData?.types.forEach(t => specClosed.add(t.name));
   document.querySelectorAll('.spec-card').forEach(c => c.classList.toggle('collapsed', !open));
+  if (open) equalizeSpecHistHeights();
 }
 
 /** btn = ปุ่มในการ์ด → บันทึกเฉพาะประเภทนั้น; ไม่ส่ง → บันทึกทุกรายการที่แก้ไว้ */
