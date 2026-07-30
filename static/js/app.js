@@ -171,6 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('tab-' + tab).style.display = '';
       if (tab === 'dashboard') { loadStats(); loadRentalDashboard(); }
       if (tab === 'assets' && !assetLoaded) { loadAssetMeta(); loadAssets(); assetLoaded = true; }
+      if (tab === 'specs' && !specsLoaded) { loadMachineSpecs(); }
     });
   });
 
@@ -2029,6 +2030,178 @@ async function applyEdeviceSync() {
     btn.textContent = '✓ ยืนยัน Sync';
   }
 }
+
+// ============================================================
+//  กำหนดคุณสมบัติเครื่องคอมพิวเตอร์ (ประเภทเครื่อง × BU)
+// ============================================================
+let specsLoaded  = false;
+let specsData    = null;                 // { types, bus, specs }
+const specDirty  = new Map();            // key(ประเภท+BU) → ข้อความที่แก้แล้วยังไม่บันทึก
+const specClosed = new Set();            // ชื่อประเภทที่ย่ออยู่
+
+// ชื่อประเภทเครื่องมีช่องว่างในตัวเอง — ใช้ตัวคั่นที่ไม่มีทางอยู่ในข้อมูล
+const SPEC_SEP = '\u0000';
+function specKey(mt, bu) { return mt + SPEC_SEP + bu; }
+
+function specValue(mt, bu) {
+  const k = specKey(mt, bu);
+  if (specDirty.has(k)) return specDirty.get(k);
+  return specsData?.specs?.[mt]?.[bu]?.spec || '';
+}
+
+async function loadMachineSpecs() {
+  const wrap = document.getElementById('spec-list');
+  try {
+    specsData = await api('/api/machine-specs');
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div>โหลดข้อมูลไม่สำเร็จ: ${esc(e.error || e.message)}</div>`;
+    return;
+  }
+  specsLoaded = true;
+
+  // ตัวกรอง BU
+  const sel = document.getElementById('spec-bu-filter');
+  sel.innerHTML = '<option value="">ทุก BU</option>' +
+    specsData.bus.map(b => `<option value="${esc(b.bu_code)}">${esc(b.bu_code)} — ${esc(b.bu)}</option>`).join('');
+  sel.onchange = () => { specClosed.clear(); renderMachineSpecs(); };
+
+  // ค่าเริ่มต้น: กางทุกการ์ด — เห็นคุณสมบัติทุกประเภท × ทุก BU ได้ในหน้าเดียว
+  specClosed.clear();
+  renderMachineSpecs();
+}
+
+function specVisibleBus() {
+  const f = document.getElementById('spec-bu-filter').value;
+  return f ? specsData.bus.filter(b => b.bu_code === f) : specsData.bus;
+}
+
+function renderMachineSpecs() {
+  const bus = specVisibleBus();
+
+  document.getElementById('spec-list').innerHTML = specsData.types.map(t => {
+    const filled = bus.filter(b => specValue(t.name, b.bu_code).trim()).length;
+    const isDirty = bus.some(b => specDirty.has(specKey(t.name, b.bu_code)));
+
+    // แต่ละ BU = 1 คอลัมน์ เรียงข้างกัน เพื่อเทียบคุณสมบัติด้วยตาได้ทันที
+    const cols = bus.map(b => {
+      const cur   = specValue(t.name, b.bu_code);
+      const dirty = specDirty.has(specKey(t.name, b.bu_code));
+      const meta  = specsData.specs?.[t.name]?.[b.bu_code];
+      return `
+        <div class="spec-bu-col ${dirty ? 'dirty' : ''}">
+          <div class="spec-bu-head">
+            <span class="bu-badge bu-${esc(b.bu_code)}">${esc(b.bu_code)}</span>
+            <span class="spec-bu-name">${esc(b.bu)}</span>
+          </div>
+          <textarea rows="8" class="${dirty ? 'dirty' : ''}"
+                    data-mt="${esc(t.name)}" data-bu="${esc(b.bu_code)}"
+                    oninput="onSpecInput(this)"
+                    placeholder="คุณสมบัติที่ ${esc(b.bu_code)} กำหนด เช่น\nCPU\nRAM\nStorage\nจอ\nระบบปฏิบัติการ">${esc(cur)}</textarea>
+          <div class="spec-bu-updated">${dirty ? '● ยังไม่บันทึก'
+                                      : meta?.updated_at ? 'บันทึก ' + esc(meta.updated_at) : '—'}</div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="spec-card ${specClosed.has(t.name) ? 'collapsed' : ''} ${isDirty ? 'dirty' : ''}"
+           data-mt="${esc(t.name)}">
+        <div class="spec-card-head" onclick="toggleSpecCard(this)">
+          <div class="spec-no">${t.no}</div>
+          <div class="spec-titles">
+            <div class="spec-name">${esc(t.name)}</div>
+            <div class="spec-full">${esc(t.full_name)}</div>
+          </div>
+          <span class="spec-filled-badge ${filled === bus.length ? 'done' : ''}">กรอกแล้ว ${filled}/${bus.length} BU</span>
+          <span class="spec-caret">▼</span>
+        </div>
+        <div class="spec-card-body">
+          <div class="spec-bu-grid"
+               style="grid-template-columns:repeat(${bus.length},minmax(230px,1fr));min-width:${bus.length * 230 + (bus.length - 1) * 12}px">
+            ${cols}
+          </div>
+        </div>
+        <div class="spec-card-foot">
+          <button class="btn btn-primary" onclick="saveMachineSpecs(this)">
+            💾 บันทึกประเภทนี้
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+
+  updateSpecDirtyInfo();
+}
+
+function onSpecInput(el) {
+  const mt = el.dataset.mt, bu = el.dataset.bu, k = specKey(mt, bu);
+  const orig = specsData.specs?.[mt]?.[bu]?.spec || '';
+  if (el.value === orig) specDirty.delete(k); else specDirty.set(k, el.value);
+  const col = el.closest('.spec-bu-col');
+  el.classList.toggle('dirty', specDirty.has(k));
+  col.classList.toggle('dirty', specDirty.has(k));
+  const upd = col.querySelector('.spec-bu-updated');
+  const at  = specsData.specs?.[mt]?.[bu]?.updated_at;
+  upd.textContent = specDirty.has(k) ? '● ยังไม่บันทึก' : at ? 'บันทึก ' + at : '—';
+  el.closest('.spec-card').classList.toggle('dirty',
+    specVisibleBus().some(b => specDirty.has(specKey(mt, b.bu_code))));
+  updateSpecDirtyInfo();
+}
+
+function updateSpecDirtyInfo() {
+  const n = specDirty.size;
+  document.getElementById('spec-dirty-info').textContent = n ? `แก้ไข ${n} รายการ ยังไม่บันทึก` : '';
+  document.getElementById('spec-save-all').disabled = n === 0;
+}
+
+function toggleSpecCard(headEl) {
+  const card = headEl.closest('.spec-card');
+  const mt   = card.dataset.mt;
+  if (specClosed.has(mt)) specClosed.delete(mt); else specClosed.add(mt);
+  card.classList.toggle('collapsed', specClosed.has(mt));
+}
+
+function toggleAllSpecCards(open) {
+  specClosed.clear();
+  if (!open) specsData?.types.forEach(t => specClosed.add(t.name));
+  document.querySelectorAll('.spec-card').forEach(c => c.classList.toggle('collapsed', !open));
+}
+
+/** btn = ปุ่มในการ์ด → บันทึกเฉพาะประเภทนั้น; ไม่ส่ง → บันทึกทุกรายการที่แก้ไว้ */
+async function saveMachineSpecs(btn) {
+  const machineType = btn ? btn.closest('.spec-card').dataset.mt : null;
+  const items = [];
+  for (const [k, spec] of specDirty) {
+    const [mt, bu] = k.split(SPEC_SEP);
+    if (machineType && mt !== machineType) continue;
+    items.push({ machine_type: mt, bu_code: bu, spec });
+  }
+  if (!items.length) {
+    showToast(machineType ? 'ประเภทนี้ไม่มีการแก้ไข' : 'ไม่มีการแก้ไข');
+    return;
+  }
+
+  try {
+    await api('/api/machine-specs', 'POST', { items });
+  } catch (e) {
+    showToast('บันทึกไม่สำเร็จ: ' + (e.error || e.message), 'error');
+    return;
+  }
+
+  // merge ค่าที่บันทึกแล้วเข้า specsData แล้วเคลียร์ dirty เฉพาะรายการที่ส่งไป
+  const now = new Date().toLocaleString('sv-SE').replace('T', ' ');
+  items.forEach(it => {
+    const store = specsData.specs[it.machine_type] || (specsData.specs[it.machine_type] = {});
+    if (it.spec.trim()) store[it.bu_code] = { spec: it.spec, updated_at: now };
+    else delete store[it.bu_code];
+    specDirty.delete(specKey(it.machine_type, it.bu_code));
+  });
+
+  renderMachineSpecs();
+  showToast(`บันทึกคุณสมบัติแล้ว ${items.length} รายการ`, 'success');
+}
+
+window.addEventListener('beforeunload', e => {
+  if (specDirty.size) { e.preventDefault(); e.returnValue = ''; }
+});
 
 // ---- Helpers ----
 async function api(url, method = 'GET', body) {

@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, render_template, send_file
 import sqlite3, json, io, os, re, csv, time
 from datetime import datetime, date
 import requests as req_lib
-from report_pdf import _machine_rank, MACHINE_ORDER
+from report_pdf import _machine_rank, MACHINE_ORDER, _norm_machine
 
 app = Flask(__name__)
 DB = os.path.join(os.path.dirname(__file__), 'employees.db')
@@ -94,6 +94,15 @@ def init_db():
             created_at          TEXT DEFAULT (datetime('now','localtime'))
         )
     ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS machine_specs (
+            machine_type TEXT NOT NULL,
+            bu_code      TEXT NOT NULL,
+            spec         TEXT,
+            updated_at   TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (machine_type, bu_code)
+        )
+    ''')
     # migration: employees table
     cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
     if 'emp_code' not in cols:
@@ -121,16 +130,18 @@ def init_db():
 
 import hashlib as _hashlib
 
-def _js_version():
+def _static_version(*parts):
     try:
-        p = os.path.join(os.path.dirname(__file__), 'static', 'js', 'app.js')
+        p = os.path.join(os.path.dirname(__file__), 'static', *parts)
         return _hashlib.md5(open(p, 'rb').read()).hexdigest()[:8]
     except Exception:
         return '0'
 
 @app.route('/')
 def index():
-    return render_template('index.html', js_version=_js_version())
+    return render_template('index.html',
+                           js_version=_static_version('js', 'app.js'),
+                           css_version=_static_version('css', 'style.css'))
 
 @app.route('/api/employees', methods=['GET'])
 def list_employees():
@@ -279,6 +290,76 @@ def get_filters():
         'bus':   [dict(r) for r in bus],
         'depts': [r['department'] for r in depts]
     })
+
+# ---------- คุณสมบัติเครื่องคอมพิวเตอร์ (spec ต่อ ประเภทเครื่อง × BU) ----------
+
+def _spec_bus():
+    """รายการ BU ที่ต้องกรอกคุณสมบัติ — ใช้ชุดเดียวกับตัวกรอง BU ทั้งระบบ"""
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT DISTINCT bu_code, bu FROM employees WHERE bu_code != "" ORDER BY bu_code'
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.route('/api/machine-specs', methods=['GET'])
+def get_machine_specs():
+    """คุณสมบัติที่แต่ละ BU กำหนดไว้ ของทุกประเภทเครื่องในแค็ตตาล็อก (1-9)"""
+    conn = get_db()
+    rows = conn.execute('SELECT machine_type, bu_code, spec, updated_at FROM machine_specs').fetchall()
+    conn.close()
+
+    specs = {}
+    for r in rows:
+        specs.setdefault(r['machine_type'], {})[r['bu_code']] = {
+            'spec': r['spec'] or '', 'updated_at': r['updated_at']
+        }
+
+    return jsonify({
+        'types': [{'no': i + 1, 'name': name, 'full_name': full}
+                  for i, (name, full) in enumerate(MACHINE_ORDER)],
+        'bus':   _spec_bus(),
+        'specs': specs,
+    })
+
+
+@app.route('/api/machine-specs', methods=['POST'])
+def save_machine_specs():
+    """บันทึกคุณสมบัติ — body: {"items": [{"machine_type","bu_code","spec"}, ...]}
+    spec ว่าง = ลบแถวออก (ไม่เก็บค่าว่างไว้ในตาราง)"""
+    items = (request.get_json(silent=True) or {}).get('items') or []
+    if not isinstance(items, list):
+        return jsonify({'error': 'items ต้องเป็น list'}), 400
+
+    valid_types = {_norm_machine(name): name for name, _ in MACHINE_ORDER}
+    valid_bus   = {b['bu_code'] for b in _spec_bus()}
+
+    conn = get_db()
+    saved = deleted = 0
+    for it in items:
+        mt = valid_types.get(_norm_machine(it.get('machine_type')))
+        bu = (it.get('bu_code') or '').strip()
+        if not mt or bu not in valid_bus:
+            conn.close()
+            return jsonify({'error': f"ประเภทเครื่องหรือ BU ไม่ถูกต้อง: "
+                                     f"{it.get('machine_type')} / {it.get('bu_code')}"}), 400
+        spec = (it.get('spec') or '').strip()
+        if spec:
+            conn.execute('''
+                INSERT INTO machine_specs (machine_type, bu_code, spec, updated_at)
+                VALUES (?, ?, ?, datetime('now','localtime'))
+                ON CONFLICT(machine_type, bu_code)
+                DO UPDATE SET spec = excluded.spec, updated_at = excluded.updated_at
+            ''', (mt, bu, spec))
+            saved += 1
+        else:
+            cur = conn.execute('DELETE FROM machine_specs WHERE machine_type = ? AND bu_code = ?', (mt, bu))
+            deleted += cur.rowcount
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True, 'saved': saved, 'deleted': deleted})
+
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():

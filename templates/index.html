@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Amarin Employee Database</title>
-<link rel="stylesheet" href="/static/css/style.css">
+<link rel="stylesheet" href="/static/css/style.css?v={{ css_version }}">
 </head>
 <body>
 
@@ -27,6 +27,7 @@
   <button class="tab active" data-tab="employees">รายชื่อพนักงาน</button>
   <button class="tab" data-tab="assets">IT Assets</button>
   <button class="tab" data-tab="dashboard">Dashboard</button>
+  <button class="tab" data-tab="specs">กำหนดคุณสมบัติเครื่อง</button>
 </nav>
 
 <!-- ======= EMPLOYEES TAB ======= -->
@@ -741,6 +742,38 @@
     </div>
 
   </div><!-- end dash-pane-machine -->
+
+</div>
+
+<!-- ======= MACHINE SPEC TAB (กำหนดคุณสมบัติเครื่องคอมพิวเตอร์) ======= -->
+<div id="tab-specs" class="tab-content" style="display:none">
+
+  <div class="spec-intro">
+    <h2>กำหนดคุณสมบัติเครื่องคอมพิวเตอร์</h2>
+    <p>กรอกคุณสมบัติ (spec) ที่แต่ละ BU ต้องการ ของเครื่องคอมพิวเตอร์แต่ละประเภท
+       ตามลำดับแค็ตตาล็อกมาตรฐาน 1-9 — ใช้เป็นเกณฑ์อ้างอิงในการจัดหาเครื่อง</p>
+  </div>
+
+  <div class="spec-toolbar">
+    <div class="spec-toolbar-left">
+      <label class="spec-tb-label">แสดง BU</label>
+      <select id="spec-bu-filter">
+        <option value="">ทุก BU</option>
+      </select>
+      <button class="btn btn-secondary" onclick="toggleAllSpecCards(true)">ขยายทั้งหมด</button>
+      <button class="btn btn-secondary" onclick="toggleAllSpecCards(false)">ย่อทั้งหมด</button>
+    </div>
+    <div class="spec-toolbar-right">
+      <span id="spec-dirty-info" class="spec-dirty-info"></span>
+      <button class="btn btn-primary" id="spec-save-all" onclick="saveMachineSpecs()" disabled>
+        💾 บันทึกทั้งหมด
+      </button>
+    </div>
+  </div>
+
+  <div id="spec-list">
+    <div class="empty-state"><div class="empty-icon">⏳</div>กำลังโหลด...</div>
+  </div>
 
 </div>
 
