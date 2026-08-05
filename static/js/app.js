@@ -2091,10 +2091,11 @@ function specHistoryHtml(mt, buCode) {
   const total    = list.reduce((n, h) => n + h.count, 0);
   const sumMonth = list.reduce((n, h) => n + (h.monthly_total || 0), 0);
 
-  const chips = list.map(h => {
+  const chips = list.map((h, i) => {
     const tip = [
       esc(h.model),
       `${h.count} เครื่อง`,
+      _specYears(h) ? `เริ่มเช่าปี ${_specYears(h)}` : 'ไม่มีข้อมูลปีที่เริ่มเช่า',
       h.monthly == null
         ? 'ไม่มีข้อมูลค่าเช่า'
         : `ค่าเช่า ${_baht(h.monthly)}/เครื่อง/เดือน` +
@@ -2102,15 +2103,22 @@ function specHistoryHtml(mt, buCode) {
           (h.monthly_known < h.count ? ` · มีตัวเลข ${h.monthly_known}/${h.count} เครื่อง` : '') +
           ` · รวม ${_baht(h.monthly_total)}/เดือน`,
       h.last_end ? `สัญญาหมดล่าสุด ${esc(h.last_end)}` : '',
+      'คลิกจำนวนเพื่อดูผู้ถือครอง',
     ].filter(Boolean).join('\n');
 
+    const yr = _specYears(h);
     return `
-      <span class="spec-hist-chip" title="${tip}">
-        <span class="spec-hist-model">${esc(h.model)}</span>
-        <span class="spec-hist-rate ${h.monthly == null ? 'na' : ''}">${
-          h.monthly == null ? '—' : _baht(h.monthly)}</span>
-        <span class="spec-hist-count">${h.count}</span>
-      </span>`;
+      <div class="spec-hist-item">
+        <span class="spec-hist-chip" title="${tip}">
+          <span class="spec-hist-model">${esc(h.model)}</span>
+          <span class="spec-hist-year ${yr ? '' : 'na'}">${yr || '—'}</span>
+          <span class="spec-hist-rate ${h.monthly == null ? 'na' : ''}">${
+            h.monthly == null ? '—' : _baht(h.monthly)}</span>
+          <button type="button" class="spec-hist-count" title="ดูผู้ถือครอง"
+                  onclick="toggleSpecHolders(this)"
+                  data-mt="${esc(mt)}" data-bu="${esc(buCode)}" data-i="${i}">${h.count} ▾</button>
+        </span>
+      </div>`;
   }).join('');
 
   return `
@@ -2118,10 +2126,57 @@ function specHistoryHtml(mt, buCode) {
       <div class="spec-hist-label">รุ่นที่เคยเช่า <span>${list.length} รุ่น · ${total} เครื่อง${
         sumMonth ? ' · ' + _baht(sumMonth) + '/ด.' : ''}</span></div>
       <div class="spec-hist-sub">
-        <span>รุ่น</span><span>฿/เครื่อง/ด.</span><span>จำนวน</span>
+        <span>รุ่น</span><span>ปีเริ่ม</span><span>฿/เครื่อง/ด.</span><span>จำนวน</span>
       </div>
       <div class="spec-hist-chips">${chips}</div>
     </div>`;
+}
+
+/** ปีที่เริ่มเช่า — ปีเดียว "2023", ต่อเนื่อง "2022–24", กระโดด "2020, 2023" */
+function _specYears(h) {
+  const ys = h.years || [];
+  if (!ys.length) return '';
+  if (ys.length === 1) return String(ys[0]);
+  if (ys[ys.length - 1] - ys[0] === ys.length - 1) {
+    return ys[0] + '–' + String(ys[ys.length - 1]).slice(-2);
+  }
+  return ys.map((y, i) => (i ? String(y).slice(-2) : y)).join(',');
+}
+
+const SPEC_STATUS_TH = {
+  ok: 'ปกติ', warning: 'ใกล้หมด', critical: 'ใกล้หมด', expired: 'หมดอายุ',
+  returned: 'คืนแล้ว', unknown: 'ไม่มีวันหมด',
+};
+
+/** กาง/พับ รายละเอียดผู้ถือครองของรุ่นนั้น เมื่อคลิกที่จำนวน */
+function toggleSpecHolders(btn) {
+  const item = btn.closest('.spec-hist-item');
+  const card = btn.closest('.spec-card');
+  const open = item.querySelector('.spec-hist-holders');
+  if (open) {
+    open.remove();
+    btn.classList.remove('open');
+    equalizeSpecHistHeights(card);
+    return;
+  }
+  const h = specsData.history?.[btn.dataset.mt]?.[btn.dataset.bu]?.[+btn.dataset.i];
+  const rows = (h?.holders || []).map(x => `
+    <div class="spec-holder">
+      <span class="spec-holder-name">${esc(x.name || '— ไม่ระบุผู้ถือครอง —')}</span>
+      <span class="spec-holder-dept" title="${esc(x.dept)}">${esc(x.dept || '—')}</span>
+      <span class="spec-holder-date">${esc((x.start_date || '—').slice(0, 7))}</span>
+      <span class="spec-holder-st st-${esc(x.status)}">${esc(SPEC_STATUS_TH[x.status] || x.status || '—')}</span>
+    </div>`).join('');
+
+  item.insertAdjacentHTML('beforeend', `
+    <div class="spec-hist-holders">
+      <div class="spec-holder-head">
+        <span>ผู้ถือครอง</span><span>หน่วยงาน</span><span>เริ่ม</span><span>สถานะ</span>
+      </div>
+      ${rows || '<div class="spec-holder-none">— ไม่มีข้อมูล —</div>'}
+    </div>`);
+  btn.classList.add('open');
+  equalizeSpecHistHeights(card);
 }
 
 // จำนวนคอลัมน์ต่อบรรทัด — 7 BU จะตกเป็น 3 บรรทัด (3+3+1) ไม่แน่นและไม่ต้องเลื่อนแนวนอน

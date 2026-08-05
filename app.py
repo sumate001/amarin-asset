@@ -308,7 +308,7 @@ def _spec_rental_history():
     → { machine_type: { bu_code: [{model, count, last_end}, ...] } }
     เรียงจำนวนมาก→น้อย เพื่อใช้อ้างอิงตอนกำหนดคุณสมบัติรุ่นใหม่"""
     canon = {_norm_machine(name): name for name, _ in MACHINE_ORDER}
-    agg   = {}   # (machine_type, bu_code, model) → {count, last_end, charges}
+    agg   = {}   # (machine_type, bu_code, model) → {count, last_end, charges, years, holders}
 
     for r in fetch_assets_raw():
         if r.get('ownership') != 'เช่า':
@@ -319,11 +319,26 @@ def _spec_rental_history():
         md = ' '.join(((r.get('model') or '') or (r.get('brand') or '')).split())
         if not (mt and bu and md):
             continue
-        cell = agg.setdefault((mt, bu, md), {'count': 0, 'last_end': '', 'charges': []})
+        cell = agg.setdefault((mt, bu, md), {'count': 0, 'last_end': '',
+                                             'charges': [], 'years': set(), 'holders': []})
         cell['count'] += 1
         end = r.get('end_date') or ''
         if end > cell['last_end']:
             cell['last_end'] = end
+        start = r.get('start_date') or ''
+        if len(start) >= 4 and start[:4].isdigit():
+            cell['years'].add(int(start[:4]))
+        # รายละเอียดผู้ถือครอง — กางดูได้จากการคลิกจำนวนในหน้ากำหนดคุณสมบัติ
+        cell['holders'].append({
+            'name':       r.get('user_name') or '',
+            'dept':       r.get('emp_dept') or r.get('dept_sheet') or '',
+            'asset_no':   r.get('asset_no') or '',
+            'serial_no':  r.get('serial_no') or '',
+            'start_date': start,
+            'end_date':   end,
+            'monthly':    r.get('monthly_charge') or None,
+            'status':     r.get('contract_status') or '',
+        })
         # ค่าเช่า/เดือน เป็นราคาต่อเครื่อง และปกติเท่ากันทุกเครื่องในรุ่นเดียวกัน
         # เครื่องที่ Sheets ไม่มีตัวเลข (คืนแล้ว/สัญญาเก่า) = 0 → ไม่นับในค่าเฉลี่ย
         # ไม่งั้นจะฉุดราคาต่อเครื่องให้ต่ำกว่าจริง
@@ -333,10 +348,18 @@ def _spec_rental_history():
     out = {}
     for (mt, bu, md), c in agg.items():
         ch = c['charges']
+        yrs = sorted(c['years'])
+        # ผู้ถือครอง: สัญญาใหม่สุดขึ้นก่อน แล้วเรียงชื่อ
+        c['holders'].sort(key=lambda h: (h['start_date'] or '', h['name']), reverse=True)
         out.setdefault(mt, {}).setdefault(bu, []).append({
             'model':    md,
             'count':    c['count'],
             'last_end': c['last_end'],
+            # ปีที่เริ่มเช่า (ค.ศ. จาก start_date) — [] = ไม่มีวันที่เริ่มในระบบ
+            'years':      yrs,
+            'year_first': yrs[0]  if yrs else None,
+            'year_last':  yrs[-1] if yrs else None,
+            'holders':    c['holders'],
             # ต่อเครื่อง/เดือน (เฉลี่ยจากเครื่องที่มีตัวเลข) — None = ไม่มีข้อมูลค่าเช่าเลย
             'monthly':       round(sum(ch) / len(ch)) if ch else None,
             'monthly_min':   round(min(ch)) if ch else None,
