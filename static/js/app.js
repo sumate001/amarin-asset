@@ -2163,7 +2163,7 @@ function toggleSpecHolders(btn) {
   const rows = (h?.holders || []).map(x => `
     <div class="spec-holder">
       <span class="spec-holder-name">${esc(x.name || '— ไม่ระบุผู้ถือครอง —')}</span>
-      <span class="spec-holder-dept" title="${esc(x.dept)}">${esc(x.dept || '—')}</span>
+      <span class="spec-holder-pos" title="${esc(x.position)}">${esc(x.position || '—')}</span>
       <span class="spec-holder-date">${esc((x.start_date || '—').slice(0, 7))}</span>
       <span class="spec-holder-st st-${esc(x.status)}">${esc(SPEC_STATUS_TH[x.status] || x.status || '—')}</span>
     </div>`).join('');
@@ -2171,7 +2171,7 @@ function toggleSpecHolders(btn) {
   item.insertAdjacentHTML('beforeend', `
     <div class="spec-hist-holders">
       <div class="spec-holder-head">
-        <span>ผู้ถือครอง</span><span>หน่วยงาน</span><span>เริ่ม</span><span>สถานะ</span>
+        <span>ผู้ถือครอง</span><span>ตำแหน่งงาน</span><span>เริ่ม</span><span>สถานะ</span>
       </div>
       ${rows || '<div class="spec-holder-none">— ไม่มีข้อมูล —</div>'}
     </div>`);

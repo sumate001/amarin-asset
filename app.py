@@ -331,7 +331,7 @@ def _spec_rental_history():
         # รายละเอียดผู้ถือครอง — กางดูได้จากการคลิกจำนวนในหน้ากำหนดคุณสมบัติ
         cell['holders'].append({
             'name':       r.get('user_name') or '',
-            'dept':       r.get('emp_dept') or r.get('dept_sheet') or '',
+            'position':   r.get('emp_position') or '',
             'asset_no':   r.get('asset_no') or '',
             'serial_no':  r.get('serial_no') or '',
             'start_date': start,
