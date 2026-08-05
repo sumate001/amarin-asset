@@ -367,9 +367,12 @@ def _spec_rental_history():
             'monthly_known': len(ch),          # กี่เครื่องที่รู้ค่าเช่า (จาก count ทั้งหมด)
             'monthly_total': round(sum(ch)) if ch else None,
         })
+    # ปีที่เริ่มเช่าใหม่สุดขึ้นก่อน (รุ่นล่าสุดคือรุ่นที่ใช้อ้างอิงตอนกำหนด spec ปีนี้)
+    # ไม่มีปี = ไม่มี start_date → ไว้ท้ายสุด, ปีเท่ากันเรียงจำนวนมาก→น้อย
     for by_bu in out.values():
         for lst in by_bu.values():
-            lst.sort(key=lambda x: (-x['count'], x['model']))
+            lst.sort(key=lambda x: (-(x['year_last'] or 0), -(x['year_first'] or 0),
+                                    -x['count'], x['model']))
     return out
 
 
