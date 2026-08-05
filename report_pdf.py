@@ -15,7 +15,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Frame, PageTemplate,
+from reportlab.platypus import (BaseDocTemplate, Frame, PageBreak, PageTemplate,
                                 Paragraph, Spacer, Table, TableStyle)
 
 FONT_DIR = os.path.join(os.path.dirname(__file__), 'static', 'fonts')
@@ -651,14 +651,14 @@ def _spec_story(data, W):
     mt_tbl.setStyle(TableStyle(ms))
     story.append(mt_tbl)
 
-    # ── 2. คุณสมบัติที่ขอ แยกรายประเภทเครื่อง ──────────────────────
-    story += [Spacer(1, 6 * mm),
-              _heading('2.', 'คุณสมบัติที่แต่ละ BU กำหนด (เทียบข้าม BU)',
-                       'แถวเขียว = ทุก BU ตรงกัน (รวมเป็นสเปกกลางได้) · '
-                       'แถวส้ม = ต่างกัน ต้องตัดสินใจ · เทา = ข้อมูลรุ่นที่เช่าอยู่ ใช้อ้างอิง'),
-              Spacer(1, 1.5 * mm)]
+    # ── 2. คุณสมบัติที่ขอ — ประเภทเครื่องละ 1 หน้า ─────────────────
+    sec2_head = [_heading('2.', 'คุณสมบัติที่แต่ละ BU กำหนด (เทียบข้าม BU)',
+                          'แถวเขียว = ทุก BU ตรงกัน (รวมเป็นสเปกกลางได้) · '
+                          'แถวส้ม = ต่างกัน ต้องตัดสินใจ · เทา = ข้อมูลรุ่นที่เช่าอยู่ ใช้อ้างอิง'),
+                 Spacer(1, 2.5 * mm)]
 
     if not filled_types:
+        story += [Spacer(1, 6 * mm)] + sec2_head
         story.append(Paragraph('— ยังไม่มี BU ใดกำหนดคุณสมบัติ —',
                                _style('none', 9, MUTED, align=TA_CENTER)))
         return story
@@ -757,8 +757,10 @@ def _spec_story(data, W):
         if skip:
             note += '&nbsp;&nbsp;<font color="#94a3b8">· ยังไม่กรอก: %s</font>' % _esc(', '.join(skip))
 
-        story += [CondPageBreak(45 * mm), Spacer(1, 3 * mm),
-                  _heading('%d.' % t['no'], t['name'], _esc(t['full_name'])),
+        # ประเภทเครื่องละ 1 หน้าเสมอ — เอาไปเทียบ/สั่งพิมพ์แยกแผ่นต่อประเภทได้
+        story += [PageBreak()]
+        story += (sec2_head if t is filled_types[0] else [])
+        story += [_heading('%d.' % t['no'], t['name'], _esc(t['full_name'])),
                   Spacer(1, 1.2 * mm), st,
                   Spacer(1, 1.2 * mm), Paragraph(note, _style('nt', 8, SLATE, leading=11))]
 
