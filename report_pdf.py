@@ -15,8 +15,8 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (BaseDocTemplate, Frame, PageTemplate, Paragraph,
-                                Spacer, Table, TableStyle)
+from reportlab.platypus import (BaseDocTemplate, CondPageBreak, Frame, PageTemplate,
+                                Paragraph, Spacer, Table, TableStyle)
 
 FONT_DIR = os.path.join(os.path.dirname(__file__), 'static', 'fonts')
 FONT     = 'Sarabun'
@@ -167,8 +167,7 @@ def _draw_frame(canvas, doc):
     canvas.rect(0, h - 15 * mm, w, 15 * mm, stroke=0, fill=1)
     canvas.setFillColor(WHITE)
     canvas.setFont(FONT_B, 12)
-    canvas.drawString(11 * mm, h - 10 * mm,
-                      'รายงานการใช้งานเครื่อง IT — ประเภทเครื่อง × ตำแหน่งงาน')
+    canvas.drawString(11 * mm, h - 10 * mm, doc._header_title)
     canvas.setFont(FONT, 8)
     canvas.drawRightString(w - 11 * mm, h - 10 * mm, 'Amarin Employee Database')
 
@@ -179,13 +178,16 @@ def _draw_frame(canvas, doc):
     canvas.restoreState()
 
 
-def _doc(buf, generated_at):
+def _doc(buf, generated_at,
+         header_title='รายงานการใช้งานเครื่อง IT — ประเภทเครื่อง × ตำแหน่งงาน',
+         title='รายงานการใช้งานเครื่อง IT'):
     doc = BaseDocTemplate(buf, pagesize=landscape(A4),
                           leftMargin=11 * mm, rightMargin=11 * mm,
                           topMargin=19 * mm, bottomMargin=11 * mm,
-                          title='รายงานการใช้งานเครื่อง IT',
+                          title=title,
                           author='Amarin Employee Database')
-    doc._generated_at = generated_at
+    doc._generated_at  = generated_at
+    doc._header_title  = header_title
     doc.addPageTemplates([PageTemplate(
         id='all',
         frames=[Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id='m')],
@@ -525,5 +527,264 @@ def build_asset_report(rows, filter_labels):
     buf = io.BytesIO()
     doc = _doc(buf, generated_at)
     doc.build(_story(rows, filter_labels, doc.width))
+    buf.seek(0)
+    return buf
+
+
+# ══════════════════════════════════════════════════════════════════
+#  รายงานคุณสมบัติเครื่องที่จะเช่า/ซื้อ (หน้ากำหนดคุณสมบัติ) — สำหรับผู้บริหาร
+# ══════════════════════════════════════════════════════════════════
+
+def _spec_parse(text):
+    """แยกสเปกเป็นหัวข้อ → ค่า สำหรับเทียบข้าม BU
+    รับรูปแบบ 'CPU: i7-1355U' และ 'CPU - i7' — บรรทัดที่ไม่มีตัวคั่นถือเป็นข้อความอิสระ
+    'CPU :' ที่ยังไม่ใส่ค่า ก็นับเป็นหัวข้อ (ค่าว่าง) เพื่อให้เห็นว่า BU นี้ตั้งหัวข้อไว้แล้ว
+    → ({key_norm: (label, value)}, [บรรทัดอิสระ])"""
+    fields, free = {}, []
+    for raw in (text or '').splitlines():
+        line = ' '.join(raw.split())
+        if not line:
+            continue
+        key = val = None
+        for sep in (':', ' - ', '–', '='):
+            if sep in line:
+                k, v = line.split(sep, 1)
+                if k.strip() and len(k.strip()) <= 30:
+                    key, val = k.strip(), v.strip()
+                break
+        if key:
+            fields.setdefault(key.lower().replace(' ', ''), (key, val))
+        else:
+            free.append(line)
+    return fields, free
+
+
+def _spec_year_text(h):
+    """ปีที่เริ่มเช่าของรุ่นนั้น — 2024, 2024–25 หรือ 2020, 2023"""
+    ys = h.get('years') or []
+    if not ys:
+        return '—'
+    if len(ys) == 1:
+        return str(ys[0])
+    if ys[-1] - ys[0] == len(ys) - 1:
+        return '%d–%s' % (ys[0], str(ys[-1])[-2:])
+    return ', '.join(str(y) for y in ys)
+
+
+def _spec_story(data, W):
+    types, bus = data['types'], data['bus']
+    specs, hist = data['specs'], data['history']
+    hue = {b['bu_code']: CAT[i % len(CAT)] for i, b in enumerate(bus)}
+
+    def spec_of(mt, bu):
+        return ((specs.get(mt) or {}).get(bu) or {}).get('spec', '').strip()
+
+    def hist_of(mt, bu):
+        return (hist.get(mt) or {}).get(bu) or []
+
+    filled_types = [t for t in types if any(spec_of(t['name'], b['bu_code']) for b in bus)]
+    n_cells      = len(types) * len(bus)
+    n_filled     = sum(1 for t in types for b in bus if spec_of(t['name'], b['bu_code']))
+    bu_done      = [b for b in bus if any(spec_of(t['name'], b['bu_code']) for t in types)]
+
+    # ── KPI ────────────────────────────────────────────────────────
+    kpis = [('BU ที่กรอกแล้ว',        '%d / %d BU' % (len(bu_done), len(bus)),      CAT[0]),
+            ('ประเภทเครื่องที่ขอ',    '%d / %d ประเภท' % (len(filled_types), len(types)), CAT[2]),
+            ('ช่องที่กรอกครบ',        '%d / %d' % (n_filled, n_cells),              CAT[3]),
+            ('รุ่นที่เคยเช่าอ้างอิง',  '%d รุ่น' % len({(mt, h['model'])
+                                                        for mt in hist
+                                                        for b in bus
+                                                        for h in hist_of(mt, b['bu_code'])}), CAT[6])]
+    kpi = Table([[Paragraph(l, _style('kl', 7.5, SLATE, align=TA_CENTER)) for l, _, _ in kpis],
+                 [Paragraph(v, _style('kv', 14, colors.HexColor(c), bold=True, align=TA_CENTER))
+                  for _, v, c in kpis]],
+                colWidths=[W / len(kpis)] * len(kpis))
+    ks = [('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, 0), 4),
+          ('BOTTOMPADDING', (0, 1), (-1, 1), 5), ('INNERGRID', (0, 0), (-1, -1), 2, WHITE)]
+    for i, (_, _, c) in enumerate(kpis):
+        ks += [('BACKGROUND', (i, 0), (i, -1), _tint(c, .10)),
+               ('LINEABOVE', (i, 0), (i, 0), 2.2, colors.HexColor(c))]
+    kpi.setStyle(TableStyle(ks))
+
+    story = [kpi, Spacer(1, 5 * mm),
+             _heading('1.', 'ความพร้อมของข้อมูล — ประเภทเครื่อง × BU',
+                      '■ = BU กำหนดคุณสมบัติแล้ว · ตัวเลข = จำนวนเครื่องที่ BU นั้นเคยเช่าประเภทนี้'),
+             Spacer(1, 1.5 * mm)]
+
+    # ── 1. ตารางไขว้ความพร้อม ──────────────────────────────────────
+    head = [Paragraph('ประเภทเครื่อง', _style('mh', 7.5, SLATE, bold=True))] + \
+           [Paragraph(_esc(b['bu_code']), _style('mh', 8, WHITE, bold=True, align=TA_CENTER))
+            for b in bus] + \
+           [Paragraph('กรอกแล้ว', _style('mh', 7.5, SLATE, bold=True, align=TA_CENTER))]
+    mrows, mtints = [head], []
+    for ti, t in enumerate(types, 1):
+        cells, done = [], 0
+        for bi, b in enumerate(bus, 1):
+            sp = spec_of(t['name'], b['bu_code'])
+            n  = sum(h['count'] for h in hist_of(t['name'], b['bu_code']))
+            if sp:
+                done += 1
+                txt = '<b>■</b>' + ('&nbsp;&nbsp;%d' % n if n else '')
+                col, tint = GREEN, _tint(CAT[2], .16)
+            elif n:
+                txt, col, tint = str(n), AMBER, _tint(CAT[3], .10)
+            else:
+                txt, col, tint = '·', MUTED, None
+            cells.append(Paragraph(txt, _style('mc', 8, col, align=TA_CENTER)))
+            if tint:
+                mtints.append((bi, ti, tint))
+        mrows.append([Paragraph('<b>%d</b>&nbsp; %s' % (ti, _esc(t['name'])),
+                                _style('mn', 8, INK))] + cells +
+                     [Paragraph('%d/%d' % (done, len(bus)),
+                                _style('mt', 7.5, GREEN if done == len(bus) else SLATE,
+                                       bold=True, align=TA_CENTER))])
+    mw = [W * .30] + [(W * .70 - 18 * mm) / max(1, len(bus))] * len(bus) + [18 * mm]
+    mt_tbl = Table(mrows, colWidths=mw, repeatRows=1, hAlign='LEFT')
+    ms = [('GRID', (0, 0), (-1, -1), .4, LINE),
+          ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+          ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+          ('BACKGROUND', (0, 0), (0, 0), colors.HexColor('#f1f5f9')),
+          ('BACKGROUND', (-1, 0), (-1, 0), colors.HexColor('#f1f5f9'))]
+    for bi, b in enumerate(bus, 1):
+        ms.append(('BACKGROUND', (bi, 0), (bi, 0), colors.HexColor(hue[b['bu_code']])))
+    ms += [('BACKGROUND', (c, r), (c, r), t) for c, r, t in mtints]
+    mt_tbl.setStyle(TableStyle(ms))
+    story.append(mt_tbl)
+
+    # ── 2. คุณสมบัติที่ขอ แยกรายประเภทเครื่อง ──────────────────────
+    story += [Spacer(1, 6 * mm),
+              _heading('2.', 'คุณสมบัติที่แต่ละ BU กำหนด (เทียบข้าม BU)',
+                       'แถวเขียว = ทุก BU ตรงกัน (รวมเป็นสเปกกลางได้) · '
+                       'แถวส้ม = ต่างกัน ต้องตัดสินใจ · เทา = ข้อมูลรุ่นที่เช่าอยู่ ใช้อ้างอิง'),
+              Spacer(1, 1.5 * mm)]
+
+    if not filled_types:
+        story.append(Paragraph('— ยังไม่มี BU ใดกำหนดคุณสมบัติ —',
+                               _style('none', 9, MUTED, align=TA_CENTER)))
+        return story
+
+    LBL_W = 30 * mm
+    for t in filled_types:
+        mt   = t['name']
+        cols = [b for b in bus if spec_of(mt, b['bu_code'])]
+        skip = [b['bu_code'] for b in bus if not spec_of(mt, b['bu_code'])]
+        parsed = {b['bu_code']: _spec_parse(spec_of(mt, b['bu_code'])) for b in cols}
+
+        # หัวข้อทั้งหมดที่ BU ใช้ — เรียงตามลำดับที่ BU แรกเขียนไว้
+        keys, labels = [], {}
+        for b in cols:
+            for k, (label, _) in parsed[b['bu_code']][0].items():
+                if k not in labels:
+                    labels[k] = label
+                    keys.append(k)
+
+        hdr = [Paragraph('หัวข้อ', _style('sh', 7.5, SLATE, bold=True))] + \
+              [Paragraph('<b>%s</b><br/><font size="6.5">%s</font>'
+                         % (_esc(b['bu_code']), _esc(b['bu'])),
+                         _style('sh', 8.5, WHITE, bold=True, leading=10))
+               for b in cols]
+        rows_t, tints, diff_keys = [hdr], [], []
+
+        if keys:
+            for ri, k in enumerate(keys, 1):
+                vals = [parsed[b['bu_code']][0].get(k, (None, None))[1] for b in cols]
+                if not any(vals):
+                    tint = colors.HexColor('#f8fafc')      # ตั้งหัวข้อไว้ แต่ยังไม่มีใครใส่ค่า
+                elif len(set(vals)) == 1:
+                    tint = _tint(CAT[2], .13)              # ทุก BU ตรงกัน
+                else:
+                    tint = _tint(CAT[3], .13)              # ต่างกัน — ต้องตัดสินใจ
+                    diff_keys.append(labels[k])
+                tints.append((ri, tint))
+                rows_t.append([Paragraph(_esc(labels[k]), _style('sk', 8, SLATE, bold=True))] +
+                              [Paragraph(_esc(v) if v else
+                                         '<font color="#b6c2cf">— ไม่ระบุ —</font>',
+                                         _style('sv', 8.5, INK)) for v in vals])
+            free_rows = [parsed[b['bu_code']][1] for b in cols]
+            if any(free_rows):
+                rows_t.append([Paragraph('อื่นๆ', _style('sk', 8, SLATE, bold=True))] +
+                              [Paragraph('<br/>'.join(_esc(x) for x in f) or '—',
+                                         _style('sv', 8, INK, leading=10)) for f in free_rows])
+                tints.append((len(rows_t) - 1, colors.HexColor('#fcfdff')))
+        else:
+            # BU ไม่ได้เขียนเป็น 'หัวข้อ: ค่า' — เทียบทีละหัวข้อไม่ได้ แสดงข้อความเต็ม
+            rows_t.append([Paragraph('คุณสมบัติที่ขอ', _style('sk', 8, SLATE, bold=True))] +
+                          [Paragraph('<br/>'.join(_esc(x) for x in
+                                                  spec_of(mt, b['bu_code']).splitlines() if x.strip()),
+                                     _style('sv', 8.5, INK, leading=11)) for b in cols])
+            tints.append((1, WHITE))
+
+        # แถบอ้างอิง — รุ่นล่าสุดที่ BU นั้นเช่าอยู่ (จาก eDevice/Sheets ไม่ใช่สิ่งที่กรอก)
+        ref_start = len(rows_t)
+        for label, fn in [
+            ('รุ่นที่เช่าล่าสุด', lambda h: _esc(h['model'])),
+            ('ปีที่เริ่มเช่า',    lambda h: _spec_year_text(h)),
+            ('ค่าเช่า/เครื่อง/ด.', lambda h: '—' if h.get('monthly') is None
+                                   else '{:,} ฿'.format(int(h['monthly']))),
+            ('จำนวนที่ถืออยู่',   lambda h: '{:,} เครื่อง'.format(h['count'])),
+        ]:
+            cells = []
+            for b in cols:
+                lst = hist_of(mt, b['bu_code'])
+                cells.append(Paragraph(fn(lst[0]) if lst else '—',
+                                       _style('rv', 8, SLATE)))
+            rows_t.append([Paragraph(label, _style('rk', 7.5, MUTED, bold=True))] + cells)
+
+        cw = [LBL_W] + [(W - LBL_W) / len(cols)] * len(cols)
+        st = Table(rows_t, colWidths=cw, repeatRows=1, hAlign='LEFT')
+        ss = [('GRID', (0, 0), (-1, -1), .4, LINE),
+              ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+              ('TOPPADDING', (0, 0), (-1, -1), 3), ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+              ('BACKGROUND', (0, 0), (0, 0), colors.HexColor('#f1f5f9')),
+              ('BACKGROUND', (0, ref_start), (-1, -1), colors.HexColor('#f6f8fb')),
+              ('LINEABOVE', (0, ref_start), (-1, ref_start), 1, BRAND)]
+        for ci, b in enumerate(cols, 1):
+            ss.append(('BACKGROUND', (ci, 0), (ci, 0), colors.HexColor(hue[b['bu_code']])))
+        ss += [('BACKGROUND', (1, r), (-1, r), tint) for r, tint in tints]
+        st.setStyle(TableStyle(ss))
+
+        has_val = any(v for b in cols for _, v in parsed[b['bu_code']][0].values())
+        if diff_keys:
+            note = '<font color="#b45309"><b>◆ ต่างกันที่:</b> %s</font>' % _esc(', '.join(diff_keys))
+        elif keys and has_val:
+            note = ('<font color="#008300"><b>◆ ทุก BU กำหนดตรงกันทุกหัวข้อ — '
+                    'รวมเป็นสเปกกลางชุดเดียวได้</b></font>')
+        elif keys:
+            note = '<font color="#94a3b8">◆ ตั้งหัวข้อไว้แล้ว แต่ยังไม่มี BU ใดใส่ค่า</font>'
+        else:
+            note = ('<font color="#94a3b8">◆ กรอกเป็นข้อความอิสระ — เทียบรายหัวข้อไม่ได้ '
+                    '(ใช้รูปแบบ "หัวข้อ: ค่า" จะเทียบให้อัตโนมัติ)</font>')
+        if skip:
+            note += '&nbsp;&nbsp;<font color="#94a3b8">· ยังไม่กรอก: %s</font>' % _esc(', '.join(skip))
+
+        story += [CondPageBreak(45 * mm), Spacer(1, 3 * mm),
+                  _heading('%d.' % t['no'], t['name'], _esc(t['full_name'])),
+                  Spacer(1, 1.2 * mm), st,
+                  Spacer(1, 1.2 * mm), Paragraph(note, _style('nt', 8, SLATE, leading=11))]
+
+    # ── ประเภทที่ยังไม่มีใครกรอก ───────────────────────────────────
+    rest = [t for t in types if t not in filled_types]
+    if rest:
+        story += [Spacer(1, 4 * mm),
+                  Paragraph('<b>ยังไม่มี BU ใดกำหนดคุณสมบัติ:</b> ' +
+                            _esc(' · '.join('%d. %s' % (t['no'], t['name']) for t in rest)),
+                            _style('rest', 8.5, AMBER, leading=12))]
+    return story
+
+
+def build_spec_report(data):
+    """data = payload เดียวกับ /api/machine-specs (types, bus, specs, history)
+
+    ข้อ 1 = ความพร้อมของข้อมูล ประเภทเครื่อง × BU
+    ข้อ 2 = คุณสมบัติที่แต่ละ BU กำหนด วางเทียบกันรายหัวข้อ + รุ่นที่เช่าอยู่เป็นฐานอ้างอิง
+    """
+    _ensure_fonts()
+    year_th      = datetime.now().year + 543
+    generated_at = datetime.now().strftime('%d/%m/%Y %H:%M น.')
+    buf = io.BytesIO()
+    doc = _doc(buf, generated_at,
+               header_title='คุณสมบัติเครื่องคอมพิวเตอร์ที่จะเช่า/ซื้อ ปี %d — ทุก BU' % year_th,
+               title='คุณสมบัติเครื่องคอมพิวเตอร์ที่จะเช่า/ซื้อ ปี %d' % year_th)
+    doc.build(_spec_story(data, doc.width))
     buf.seek(0)
     return buf

@@ -376,9 +376,8 @@ def _spec_rental_history():
     return out
 
 
-@app.route('/api/machine-specs', methods=['GET'])
-def get_machine_specs():
-    """คุณสมบัติที่แต่ละ BU กำหนดไว้ ของทุกประเภทเครื่องในแค็ตตาล็อก (1-9)"""
+def _machine_specs_payload():
+    """ข้อมูลตั้งต้นของหน้ากำหนดคุณสมบัติ — ใช้ร่วมกันระหว่าง API และรายงาน PDF"""
     conn = get_db()
     rows = conn.execute('SELECT machine_type, bu_code, spec, updated_at FROM machine_specs').fetchall()
     conn.close()
@@ -395,13 +394,35 @@ def get_machine_specs():
     except Exception:
         history = {}
 
-    return jsonify({
+    return {
         'types': [{'no': i + 1, 'name': name, 'full_name': full}
                   for i, (name, full) in enumerate(MACHINE_ORDER)],
         'bus':     _spec_bus(),
         'specs':   specs,
         'history': history,
-    })
+    }
+
+
+@app.route('/api/machine-specs', methods=['GET'])
+def get_machine_specs():
+    """คุณสมบัติที่แต่ละ BU กำหนดไว้ ของทุกประเภทเครื่องในแค็ตตาล็อก (1-9)"""
+    return jsonify(_machine_specs_payload())
+
+
+@app.route('/api/machine-specs/report.pdf', methods=['GET'])
+def machine_specs_report_pdf():
+    """รายงานสรุปคุณสมบัติที่จะเช่า/ซื้อ สำหรับผู้บริหาร — ?bu=XXX กรองเฉพาะ BU เดียว"""
+    from report_pdf import build_spec_report
+
+    data = _machine_specs_payload()
+    bu   = (request.args.get('bu') or '').strip()
+    if bu:
+        data['bus'] = [b for b in data['bus'] if b['bu_code'] == bu]
+
+    buf   = build_spec_report(data)
+    fname = f"report_machine_specs_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+    return send_file(buf, mimetype='application/pdf',
+                     as_attachment=True, download_name=fname)
 
 
 @app.route('/api/machine-specs', methods=['POST'])

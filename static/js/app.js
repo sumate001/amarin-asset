@@ -2132,6 +2132,12 @@ function specHistoryHtml(mt, buCode) {
     </div>`;
 }
 
+/** รายงาน PDF สรุปคุณสมบัติที่แต่ละ BU กำหนด — ตามตัวกรอง BU ที่เลือกอยู่ */
+function downloadSpecReport() {
+  const bu = document.getElementById('spec-bu-filter').value;
+  window.location = '/api/machine-specs/report.pdf' + (bu ? '?bu=' + encodeURIComponent(bu) : '');
+}
+
 /** ปีที่เริ่มเช่า — ปีเดียว "2023", ต่อเนื่อง "2022–24", กระโดด "2020, 2023" */
 function _specYears(h) {
   const ys = h.years || [];
