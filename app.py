@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template, send_file
 import sqlite3, json, io, os, re, csv, time
 from datetime import datetime, date
 import requests as req_lib
+from urllib.parse import quote as _url_quote
 from report_pdf import _machine_rank, MACHINE_ORDER, _norm_machine
 
 app = Flask(__name__)
@@ -1678,7 +1679,7 @@ EDEVICE_INIT_PATH = '***REMOVED-EDEVICE_INIT_PATH***'
 BU_TH_MAP = {
     'อมรินทร์ทีวี': 'AMTV', 'ออมนิเวิร์ส': 'AOMNI', 'สำนักพิมพ์': 'APUB',
     'อมรินทร์ บุ๊ค': 'ABOOK', 'โรงพิมพ์': 'APRINT', 'ACS': 'ACS',
-    'มีเดีย': 'AME', 'อมรินทร์ คอร์': 'ACS',
+    'มีเดีย': 'AME', 'เอเอ็มอี': 'AME', 'อมรินทร์ คอร์': 'ACS',
 }
 
 def bu_th_to_code(bu_th):
@@ -1961,56 +1962,84 @@ def fetch_edevice_assets(force_live=False):
     # live fetch — ดึง ID จากทั้ง PC (Computer1.asp) และ Mac (Macintosh.asp)
     cookies = _edevice_login()
 
-    def get_ids(url):
+    def get_ids(url, select_name):
+        """ดึงรหัสเครื่องจาก <select name="FullComId"/"FullMacId"> เท่านั้น
+
+        หน้า Computer1.asp/Macintosh.asp มี <select> อีกหลายตัวบนหน้าเดียวกัน
+        (ID_EmpNameAPU/ID_EmpNameAPUO = รหัสพนักงาน, SectionAPU/DepartAPU = ชื่อฝ่าย/แผนก,
+        PublicOwner) ถ้ากวาด <OPTION> ทั้งหน้าเหมือนเดิม จะได้รหัสพนักงานปนมาเป็น
+        'รหัสเครื่อง' ~5,800 ตัว แล้วยิง ComputerDetail ไม่เจอ → HTTP 500 ทุกตัว
+        ทำให้ยอด skipped บวมจนดูเหมือน sync พังทั้งที่ของจริงครบ"""
         try:
             r = req_lib.get(url, cookies=cookies, timeout=15)
-            return re.findall(r"<OPTION value='([^']+)'>[^<]+</Option>",
-                              r.content.decode('tis-620', errors='replace'))
+            html = r.content.decode('tis-620', errors='replace')
+            m = re.search(r'<select\s+name="%s">(.*?)</select>' % select_name,
+                          html, re.S | re.I)
+            if not m:
+                return []
+            return [o for o in re.findall(r"<option value='([^']*)'>", m.group(1), re.I)
+                    if o and o != 'All']
         except Exception:
             return []
 
-    # map: cid → detail_url (PC และ Mac ใช้ endpoint ต่างกัน)
-    # วนทุกระบบใน EDEVICE_BASES — เจอ cid ซ้ำให้ระบบแรกใน list ชนะ
-    cid_url_map = {}
-    mac_cids    = set()
+    def _detail_url(base, cid, mac=False):
+        # id ที่มีอักษรไทย/ช่องว่าง ('TCC ยืม 1') ต้อง encode เป็น tis-620
+        # ไม่ใช่ utf-8 ที่ requests ใส่ให้เอง ไม่งั้น ASP ตัวเก่าตอบ 500
+        page = 'MacintoshDetail.asp' if mac else 'ComputerDetail.asp'
+        return base + page + '?id=' + _url_quote(cid.encode('tis-620', 'replace'))
+
+    # cid → [detail_url ตามลำดับที่จะลอง]
+    # เดิมใช้ setdefault = ระบบแรกใน EDEVICE_BASES ชนะแล้วไม่ลองระบบอื่นอีก
+    # แต่มีเครื่องที่อยู่ในลิสต์ของทั้งสองระบบและเปิดได้เฉพาะระบบหลัง (เช่น APC63006)
+    cid_urls = {}
     for base in EDEVICE_BASES:
-        _ed_write_status({'running': True, 'done': False, 'error': None,
-                          'count': 0, 'total': 0, 'heartbeat': time.time(),
-                          'phase': f'กำลังโหลดรายการ PC ({base.rstrip("/").split("/")[-1]})...'})
-        for cid in get_ids(base + 'Computer1.asp'):
-            cid_url_map.setdefault(cid, base + 'ComputerDetail.asp?id=' + cid)
+        tag = base.rstrip('/').split('/')[-1]
+        for page, sel, mac in (('Computer1.asp', 'FullComId', False),
+                               ('Macintosh.asp', 'FullMacId', True)):
+            _ed_write_status({'running': True, 'done': False, 'error': None,
+                              'count': 0, 'total': 0, 'heartbeat': time.time(),
+                              'phase': f'กำลังโหลดรายการ {"Mac" if mac else "PC"} ({tag})...'})
+            for cid in get_ids(base + page, sel):
+                urls = cid_urls.setdefault(cid, [])
+                u = (_detail_url(base, cid, mac), mac)
+                if u not in urls:
+                    urls.append(u)
 
-        _ed_write_status({'running': True, 'done': False, 'error': None,
-                          'count': 0, 'total': 0, 'heartbeat': time.time(),
-                          'phase': f'กำลังโหลดรายการ Mac ({base.rstrip("/").split("/")[-1]})...'})
-        for cid in get_ids(base + 'Macintosh.asp'):
-            if cid not in cid_url_map:
-                cid_url_map[cid] = base + 'MacintoshDetail.asp?id=' + cid
-                mac_cids.add(cid)
+    # เครื่องที่อยู่ในลิสต์เดียวไม่มีตัวสำรอง — เติม endpoint อีกแบบไว้ให้ลองต่อ
+    for cid, urls in cid_urls.items():
+        for base in EDEVICE_BASES:
+            for mac in (False, True):
+                u = (_detail_url(base, cid, mac), mac)
+                if u not in urls:
+                    urls.append(u)
 
-    total_ids = len(cid_url_map)
+    total_ids = len(cid_urls)
     _ed_write_status({'running': True, 'done': False, 'error': None, 'count': 0, 'total': total_ids})
 
     def fetch_one(cid):
-        """คืน (record, skip_reason) — skip_reason=None แปลว่าสำเร็จ"""
-        url = cid_url_map[cid]
-        try:
-            r2 = req_lib.get(url, cookies=cookies, timeout=12)
-        except Exception as e:
-            return None, f'request_error:{type(e).__name__}'
-        if r2.status_code != 200:
-            return None, f'http_{r2.status_code}'
-        if len(r2.content) <= 3000:
-            return None, 'empty_page'   # หน้าเปล่า/redirect — มักแปลว่า session หมดอายุ
-        try:
-            text = r2.content.decode('tis-620', errors='replace')
-            if cid in mac_cids:
-                rec = _parse_mac_detail(text, cid)
-            else:
-                rec = _parse_computer_detail(text, cid)
-        except Exception as e:
-            return None, f'parse_error:{type(e).__name__}'
-        return rec, None
+        """คืน (record, skip_reason) — skip_reason=None แปลว่าสำเร็จ
+        ลอง endpoint ตามลำดับใน cid_urls จนกว่าจะได้หน้าจริง (ดู _detail_url)"""
+        reason = 'no_endpoint'
+        for url, mac in cid_urls[cid]:
+            try:
+                r2 = req_lib.get(url, cookies=cookies, timeout=12)
+            except Exception as e:
+                reason = f'request_error:{type(e).__name__}'
+                continue
+            if r2.status_code != 200:
+                reason = f'http_{r2.status_code}'
+                continue
+            if len(r2.content) <= 3000:
+                reason = 'empty_page'   # หน้าเปล่า/redirect — มักแปลว่า session หมดอายุ
+                continue
+            try:
+                text = r2.content.decode('tis-620', errors='replace')
+                rec = _parse_mac_detail(text, cid) if mac else _parse_computer_detail(text, cid)
+            except Exception as e:
+                reason = f'parse_error:{type(e).__name__}'
+                continue
+            return rec, None
+        return None, reason
 
     assets = []
     # skipped: reason → { count, cids (เก็บตัวอย่างไม่เกิน 20) }
@@ -2021,7 +2050,7 @@ def fetch_edevice_assets(force_live=False):
                       'phase': 'กำลังดึงข้อมูลรายเครื่อง...'})
     # max_workers=10 — มากกว่านี้ GIL อิ่มตัว แต่ตอนนี้รันใน subprocess แยกแล้ว ไม่กระทบ Gunicorn worker
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as ex:
-        fut_map = {ex.submit(fetch_one, cid): cid for cid in cid_url_map}
+        fut_map = {ex.submit(fetch_one, cid): cid for cid in cid_urls}
         for fut in concurrent.futures.as_completed(fut_map):
             rec, reason = fut.result()
             if rec:
@@ -2502,8 +2531,17 @@ if __name__ == '__main__':
     if '--edevice-fetch' in sys.argv:
         try:
             assets = fetch_edevice_assets(force_live=True)
+            # total = จำนวนรหัสเครื่องที่เจอในลิสต์จริง ไม่ใช่จำนวนที่ดึงสำเร็จ
+            # (เดิมใส่ len(assets) ทั้งสองช่อง หน้าจอเลยขึ้น 100% เสมอ ต่อให้ดึงไม่ครบ)
+            try:
+                with open(EDEVICE_SKIPPED_JSON, encoding='utf-8') as f:
+                    _sum = json.load(f)
+            except Exception:
+                _sum = {}
             _ed_write_status({'running': False, 'done': True, 'error': None,
-                              'count': len(assets), 'total': len(assets)})
+                              'count': len(assets),
+                              'total': _sum.get('total_ids') or len(assets),
+                              'skipped': _sum.get('skipped', 0)})
             # บอกให้ทุก Gunicorn worker ล้าง in-memory asset cache ทันที
             _invalidate_asset_cache()
         except Exception as e:
