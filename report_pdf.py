@@ -732,7 +732,22 @@ def _spec_year_text(h):
     return ', '.join(str(y) for y in ys)
 
 
-# ── chip: รหัส BU บนพื้นสีอ่อนของ BU นั้น ───────────────────────────
+# สัญลักษณ์ที่ Sarabun มี glyph จริง — นอกลิสต์นี้จะหายเป็นช่องว่างเงียบๆ
+#   ■ ◆ ▶ • · × – — → ← ↑ ↓ » §
+# ที่ไม่มี (ห้ามใช้): ✓ ✔ ○ □ ● ◇ ▸ ► ◦ ▪ ★
+#
+# ── ระบบสี: สีมีความหมายอย่างเดียว ไม่มีสีประดับ ────────────────────
+# น้ำเงิน = โครงเอกสาร (หัวตาราง/หัวข้อ) · เขียว = ตกลงกันได้แล้ว
+# ส้ม = ต้องตัดสินใจ · เทา = ยังไม่มีข้อมูล
+# เดิมให้ BU ละสี 7 สี — สีไม่ได้บอกอะไรที่ตัวอักษร 'ACS' ไม่ได้บอก
+# แต่ไปแย่งความสนใจกับเขียว/ส้มที่มีความหมายจริง
+OK_C   = '#0e7a3c'
+WARN_C = '#b45309'
+NEU_C  = '#64748b'
+OK     = colors.HexColor(OK_C)
+WARN   = colors.HexColor(WARN_C)
+
+
 def _hexs(c):
     return '#%02x%02x%02x' % (int(c.red * 255), int(c.green * 255), int(c.blue * 255))
 
@@ -742,26 +757,42 @@ def _dark(hex_color, f=.72):
     return colors.Color(c.red * f, c.green * f, c.blue * f)
 
 
-def _chip(code, hex_color, size=6.8):
-    return ('<font size="%s" color="%s" backColor="%s"><b>&nbsp;%s&nbsp;</b></font>&nbsp;'
-            % (size, _hexs(_dark(hex_color)), _hexs(_tint(hex_color, .18)), _esc(code)))
+def _chip(code, tone=None):
+    """ป้ายรหัส BU — สีเดียวทั้งเล่ม (tone ใส่ได้เมื่อสีสื่อสถานะจริงๆ)"""
+    fg, bg = {'ok':   (OK_C,   _hexs(_tint(OK_C, .13))),
+              'warn': (WARN_C, _hexs(_tint(WARN_C, .13))),
+              }.get(tone, ('#475569', '#eef2f7'))
+    return ('<font size="6.8" color="%s" backColor="%s"><b>&nbsp;%s&nbsp;</b></font>&nbsp;'
+            % (fg, bg, _esc(code)))
 
 
-def _chips(codes, hue, size=6.8):
-    return ''.join(_chip(c, hue[c], size) for c in codes)
+def _chips(codes, tone=None):
+    return ''.join(_chip(c, tone) for c in codes)
+
+
+def _legend(items, W):
+    """แถบคำอธิบายสัญลักษณ์ — วางเป็นแถบเต็มความกว้างใต้หัวข้อ
+    ของเดิมยัดไว้มุมขวาขนาด 7pt คนอ่านหาไม่เจอ เลยอ่านตารางไม่ออก"""
+    txt = '&nbsp;&nbsp;&nbsp;&nbsp;'.join(
+        '<font color="%s"><b>%s</b></font>&nbsp; %s' % (c, m, t) for c, m, t in items)
+    return Table([[Paragraph(txt, _style('lg', 7.5, SLATE, leading=10))]], colWidths=[W],
+                 style=TableStyle([('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f6f8fb')),
+                                   ('LEFTPADDING', (0, 0), (-1, -1), 7),
+                                   ('TOPPADDING', (0, 0), (-1, -1), 3.5),
+                                   ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5)]))
 
 
 def _sec_head(title, note='', W=None):
     """หัวข้อหลัก — แถบสีซ้าย + เส้นใต้บาง (แทนพื้นหลังเต็มแถบ)"""
-    cells = [Paragraph(title, _style('sh', 10.5, INK, bold=True))]
+    cells = [Paragraph(title, _style('sh', 11, INK, bold=True))]
     if note:
-        cells.append(Paragraph(note, _style('shn', 7, MUTED, align=TA_RIGHT)))
-    return Table([cells], colWidths=([W * .5, W * .5] if note and W else None),
+        cells.append(Paragraph(note, _style('shn', 7.5, MUTED, align=TA_RIGHT)))
+    return Table([cells], colWidths=([W * .58, W * .42] if note and W else None),
                  hAlign='LEFT', style=TableStyle([
                      ('VALIGN', (0, 0), (-1, -1), 'BOTTOM'),
-                     ('LEFTPADDING', (0, 0), (0, 0), 6),
+                     ('LEFTPADDING', (0, 0), (0, 0), 7),
                      ('RIGHTPADDING', (-1, 0), (-1, 0), 0),
-                     ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                     ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5),
                      ('LINEBEFORE', (0, 0), (0, 0), 3, BRAND),
                      ('LINEBELOW', (0, 0), (-1, -1), .8, LINE),
                  ]))
@@ -788,15 +819,27 @@ def _hcell(t, align=TA_LEFT):
     return Paragraph(t, _style('th', 7.5, WHITE, bold=True, align=align))
 
 
+def _units_txt(n):
+    return '{:,} เครื่อง'.format(n) if n else ''
+
+
 # ══════════════════════════════════════════════════════════════════
 #  โครงเรื่อง
+#
+#  หนึ่งหน้า = หนึ่งคำถาม และเขียนคำถามนั้นไว้บนหัวหน้าเลย
+#    หน้า 1  ผู้บริหารต้องเคาะอะไรบ้าง            (decision brief)
+#    หน้า 2  ตอนนี้ใครกรอกแล้ว ใครยังไม่กรอก      (ตารางติดตาม)
+#    หน้า 3  สรุปข้อกำหนดกลาง + ลงนาม            (เอกสารที่จะใช้จริง)
+#    หน้า 4+ รายประเภท ประเภทละหน้า               (รายละเอียดให้ IT/BU)
+#    ภาคผนวก ต้นฉบับที่แต่ละ BU กรอก
+#  หัวข้อเรียงเลข 1-4 ต่อเนื่อง ประเภทเครื่องใช้ 4.1 4.2 … (เดิมขึ้น '1.'
+#  ซ้ำกับหัวข้อ 1 คนอ่านนึกว่าวนกลับที่เดิม)
 # ══════════════════════════════════════════════════════════════════
 
 def _spec_story(data, W):
     types, bus = data['types'], data['bus']
     specs, hist = data['specs'], data['history']
     year_th = datetime.now().year + 543
-    hue = {b['bu_code']: CAT[i % len(CAT)] for i, b in enumerate(bus)}
     name_of = {b['bu_code']: b['bu'] for b in bus}
     codes = [b['bu_code'] for b in bus]
 
@@ -813,7 +856,6 @@ def _spec_story(data, W):
         src = codes if bu is None else [bu]
         return sum(h['count'] for c in src for h in hist_of(mt, c))
 
-    # parse ครั้งเดียว ใช้ทั้งเล่ม
     P = {t['name']: {c: _spec_parse(raw_of(t['name'], c)) for c in codes} for t in types}
 
     def has_val(mt, bu):
@@ -826,174 +868,229 @@ def _spec_story(data, W):
             return 'val'
         return 'hdr' if raw_of(mt, bu) else 'none'
 
-    ready   = [t for t in types if any(state(t['name'], c) == 'val' for c in codes)]
+    def cols_of(mt):
+        return [c for c in codes if state(mt, c) == 'val']
+
+    ready    = [t for t in types if cols_of(t['name'])]
     hdr_only = [t for t in types if t not in ready and any(raw_of(t['name'], c) for c in codes)]
+    rest     = [t for t in types if t not in ready and t not in hdr_only]
     bu_ready = [c for c in codes if any(state(t['name'], c) == 'val' for t in types)]
 
-    # ── ปก / สรุปผู้บริหาร ─────────────────────────────────────────
+    # ── คำนวณข้อขัดแย้งทั้งหมดก่อน — ใช้ทั้งหน้า 1 และหน้ารายประเภท ──
+    # conflicts[mt] = [(label, groups, weight)] ; groups[0] = ข้อเสนอ
+    conflicts, settled = {}, {}
+    for t in ready:
+        mt   = t['name']
+        cols = cols_of(mt)
+        F    = {c: _spec_fields(P[mt][c]) for c in cols}
+        wt   = {c: units(mt, c) for c in cols}
+        conflicts[mt], settled[mt] = [], []
+        for k in _field_order([F[c] for c in cols]):
+            pairs = [(c, F[c][k][1]) for c in cols if F[c].get(k) and F[c][k][1]]
+            if not pairs:
+                continue
+            lbl = _FIELD_LABEL.get(k) or next((F[c][k][0] for c in cols if F[c].get(k)), k)
+            g   = _group_values(pairs, wt)
+            (conflicts[mt] if len(g) > 1 else settled[mt]).append((k, lbl, g, wt))
+
+    n_conf   = sum(len(v) for v in conflicts.values())
+    conf_typ = [t for t in ready if conflicts[t['name']]]
+    done_typ = [t for t in ready if not conflicts[t['name']]]
+
+    # ══ หน้า 1 — ผู้บริหารต้องเคาะอะไรบ้าง ══════════════════════════
+    if n_conf:
+        lead = ('<b>ต้องเคาะ %d เรื่อง</b> ก่อนสรุปเป็นข้อกำหนดกลาง — %d BU ส่งคุณสมบัติแล้ว '
+                'และมี %d ประเภทเครื่องที่ทุก BU ตรงกันแล้ว พร้อมสรุปทันที'
+                % (n_conf, len(bu_ready), len(done_typ)))
+    elif ready:
+        lead = ('<b>ทุก BU ที่ส่งมาตรงกันทั้งหมด</b> — สรุปเป็นข้อกำหนดกลางได้ทันที '
+                '(ส่งแล้ว %d จาก %d BU)' % (len(bu_ready), len(bus)))
+    else:
+        lead = '<b>ยังไม่มี BU ใดส่งคุณสมบัติ</b> — รอข้อมูลก่อนจึงจะสรุปได้'
+
     story = [Table([[Paragraph('คุณสมบัติเครื่องคอมพิวเตอร์ที่จะเช่า/ซื้อ ปี %d' % year_th,
                                _style('t1', 19, INK, bold=True, leading=23))],
-                    [Paragraph('สรุปสำหรับผู้บริหาร — เปรียบเทียบข้อกำหนดของ %d หน่วยธุรกิจ '
-                               '(BU) เพื่อรวมเป็นสเปกกลางในการจัดหา' % len(bus),
-                               _style('t2', 9, SLATE, leading=13))]],
+                    [Paragraph(lead, _style('t2', 9.5, SLATE, leading=14))]],
                    colWidths=[W], hAlign='LEFT', style=TableStyle([
                        ('LEFTPADDING', (0, 0), (-1, -1), 8),
                        ('TOPPADDING', (0, 0), (-1, 0), 0),
-                       ('BOTTOMPADDING', (0, 0), (0, 0), 1),
+                       ('BOTTOMPADDING', (0, 0), (0, 0), 2),
                        ('TOPPADDING', (0, 1), (-1, 1), 0),
                        ('LINEBEFORE', (0, 0), (0, -1), 4, BRAND),
                    ])),
-             Spacer(1, 4.5 * mm)]
+             Spacer(1, 5 * mm)]
 
-    n_cells  = len(types) * len(bus)
-    n_val    = sum(1 for t in types for c in codes if state(t['name'], c) == 'val')
-    n_diff   = 0
-    decisions = []          # (type, [หัวข้อที่ยังไม่ตรงกัน], เครื่องที่ใช้อยู่)
-    for t in ready:
-        mt   = t['name']
-        cols = [c for c in codes if state(mt, c) == 'val']
-        F    = [_spec_fields(P[mt][c]) for c in cols]
-        wt   = {c: units(mt, c) for c in cols}
-        diffs = []
-        for k in _field_order(F):
-            pairs = [(c, f[k][1]) for c, f in zip(cols, F) if f.get(k) and f[k][1]]
-            if len(_group_values(pairs, wt)) > 1:
-                diffs.append(_FIELD_LABEL.get(k) or (F[0].get(k) or ('', ''))[0] or k)
-        n_diff += len(diffs)
-        decisions.append((t, diffs, units(mt)))
-
-    kpis = [('BU ที่กรอกแล้ว',        '%d / %d' % (len(bu_ready), len(bus)),   CAT[0]),
-            ('ประเภทเครื่องที่พร้อม',  '%d / %d' % (len(ready), len(types)),    CAT[2]),
-            ('ช่องที่กรอกค่าแล้ว',     '%d / %d' % (n_val, n_cells),           CAT[3]),
-            ('หัวข้อที่ยังไม่ตรงกัน',  '%d หัวข้อ' % n_diff,
-             CAT[3] if n_diff else CAT[5])]
+    total_units = sum(units(t['name']) for t in types)
+    kpis = [('BU ที่ส่งคุณสมบัติแล้ว', '%d / %d' % (len(bu_ready), len(bus)), BRAND),
+            ('ประเภทที่สรุปได้เลย',   '%d / %d' % (len(done_typ), len(types)), OK),
+            ('เรื่องที่ต้องเคาะ',      '%d' % n_conf, WARN if n_conf else OK),
+            ('เครื่องที่เกี่ยวข้อง',    '{:,}'.format(total_units), colors.HexColor(NEU_C))]
     kpi = Table([[Paragraph(l, _style('kl', 7.5, SLATE, align=TA_CENTER)) for l, _, _ in kpis],
-                 [Paragraph(v, _style('kv', 15, _dark(c, .9), bold=True, align=TA_CENTER))
+                 [Paragraph(v, _style('kv', 16, c, bold=True, align=TA_CENTER))
                   for _, v, c in kpis]],
                 colWidths=[W / len(kpis)] * len(kpis))
     ks = [('VALIGN', (0, 0), (-1, -1), 'MIDDLE'), ('TOPPADDING', (0, 0), (-1, 0), 4),
-          ('BOTTOMPADDING', (0, 1), (-1, 1), 5), ('INNERGRID', (0, 0), (-1, -1), 2.5, WHITE)]
+          ('BOTTOMPADDING', (0, 1), (-1, 1), 5), ('INNERGRID', (0, 0), (-1, -1), 2.5, WHITE),
+          ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f6f8fb'))]
     for i, (_, _, c) in enumerate(kpis):
-        ks += [('BACKGROUND', (i, 0), (i, -1), _tint(c, .09)),
-               ('LINEABOVE', (i, 0), (i, 0), 2.2, colors.HexColor(c))]
+        ks.append(('LINEABOVE', (i, 0), (i, 0), 2.2, c))
     kpi.setStyle(TableStyle(ks))
     story += [kpi, Spacer(1, 5.5 * mm)]
 
-    # ── 1. ความพร้อมของข้อมูล ─────────────────────────────────────
-    story += [_sec_head('1.&nbsp;&nbsp;ความพร้อมของข้อมูล — ประเภทเครื่อง × BU',
-                        '■ กรอกค่าแล้ว&nbsp;&nbsp;· •&nbsp;ตั้งหัวข้อไว้ ยังไม่ใส่ค่า&nbsp;&nbsp;· ·&nbsp;ยังไม่กรอก'
-                        '&nbsp;&nbsp;|&nbsp;&nbsp;ตัวเลข = เครื่องที่เช่าอยู่', W),
+    story += [_sec_head('1.&nbsp;&nbsp;สิ่งที่ต้องเคาะ — ข้อเสนอ vs. ทางเลือกอื่น',
+                        'เรียงตามจำนวนเครื่องที่ใช้อยู่จริง มากอยู่บน', W),
+              Spacer(1, 1.2 * mm)]
+
+    if n_conf:
+        story += [_legend([(OK_C, '■', 'ข้อเสนอ = ค่าที่ BU ส่วนใหญ่ตรงกัน '
+                                       '(เสมอกันดูจำนวนเครื่องที่ใช้อยู่จริง)'),
+                           (WARN_C, '■', 'ทางเลือกอื่น = ค่าที่ BU อื่นขอ ต้องเลือกอย่างใดอย่างหนึ่ง')],
+                          W),
+                  Spacer(1, 1.5 * mm)]
+        drows = [[_hcell('ประเภทเครื่อง'), _hcell('หัวข้อ'),
+                  _hcell('ข้อเสนอ'), _hcell('ทางเลือกอื่นที่ BU ขอ')]]
+        dstyle = [('LINEBELOW', (0, 1), (-1, -1), 0, WHITE)]   # ในประเภทเดียวกันไม่ตีเส้น
+        for t in sorted(conf_typ, key=lambda t: (-units(t['name']), t['no'])):
+            mt = t['name']
+            for i, (k, lbl, g, wt) in enumerate(conflicts[mt]):
+                gu = lambda grp: sum(wt.get(c, 0) for c, _ in grp)
+                drows.append([
+                    Paragraph('<b>%s</b><br/><font size="6.8" color="#94a3b8">%s</font>'
+                              % (_esc(mt), _units_txt(units(mt)) or 'ยังไม่มีเครื่องในระบบ'),
+                              _style('dn', 8, INK, leading=10.5)) if i == 0
+                    else Paragraph('', _style('dn', 8)),
+                    Paragraph('<b>%s</b>' % _esc(lbl), _style('dk', 8, SLATE)),
+                    Paragraph('%s<br/>%s<font size="6.8" color="#94a3b8">%s</font>'
+                              % (_esc(_rep(g[0])), _chips([c for c, _ in g[0]], 'ok'),
+                                 _units_txt(gu(g[0]))),
+                              _style('dv', 8, INK, leading=11)),
+                    Paragraph('<br/>'.join(
+                        '%s<font size="8">%s</font>%s'
+                        % (_chips([c for c, _ in grp], 'warn'), _esc(_rep(grp)),
+                           ('&nbsp;<font size="6.8" color="#94a3b8">%s</font>' % _units_txt(gu(grp)))
+                           if gu(grp) else '')
+                        for grp in g[1:]), _style('dd', 8, INK, leading=11))])
+            dstyle.append(('LINEBELOW', (0, len(drows) - 1), (-1, len(drows) - 1), .6, LINE))
+        dt = Table(drows, colWidths=[W * .19, 21 * mm, W * .30, None], repeatRows=1, hAlign='LEFT')
+        dt.setStyle(TableStyle(_table_base(4) + dstyle))
+        story.append(dt)
+
+    if done_typ:
+        story += [Spacer(1, 3 * mm),
+                  Paragraph('<font color="%s"><b>■</b></font>&nbsp; '
+                            '<b>ตรงกันแล้ว สรุปได้เลย:</b> %s'
+                            % (OK_C, _esc(' · '.join(t['name'] for t in done_typ))),
+                            _style('ok', 8, SLATE, leading=12))]
+
+    # ══ หน้า 2 — ใครกรอกแล้ว ใครยังไม่กรอก ═════════════════════════
+    story += [PageBreak(),
+              _sec_head('2.&nbsp;&nbsp;ความคืบหน้าการกรอกข้อมูล — ประเภทเครื่อง × BU',
+                        'ใช้ติดตามว่าต้องตามข้อมูลจาก BU ไหน', W),
+              Spacer(1, 1.2 * mm),
+              _legend([(OK_C, '■', 'กรอกค่าแล้ว'),
+                       (WARN_C, '•', 'ตั้งหัวข้อไว้ แต่ยังไม่ใส่ค่า'),
+                       ('#94a3b8', '·', 'ยังไม่กรอก')], W),
               Spacer(1, 1.5 * mm)]
 
-    head = [_hcell('ประเภทเครื่อง')] + \
+    # จำนวนเครื่องแยกออกมาเป็นคอลัมน์ของตัวเอง — ไม่ปนกับสัญลักษณ์สถานะ
+    head = [_hcell('ประเภทเครื่อง'), _hcell('เครื่องที่ใช้อยู่', TA_RIGHT)] + \
            [Paragraph('<b>%s</b>' % _esc(c), _style('mh', 8, WHITE, bold=True, align=TA_CENTER))
-            for c in codes] + [_hcell('พร้อม', TA_CENTER)]
+            for c in codes] + [_hcell('กรอกแล้ว', TA_CENTER)]
     mrows, mtints = [head], []
     for ti, t in enumerate(types, 1):
         mt, cells, done = t['name'], [], 0
-        for bi, c in enumerate(codes, 1):
-            s, n = state(mt, c), units(mt, c)
+        for bi, c in enumerate(codes, 2):
+            s = state(mt, c)
             if s == 'val':
                 done += 1
-                txt, col = '<b>■</b>' + ('&nbsp;&nbsp;%d' % n if n else ''), GREEN
-                mtints.append((bi, ti, _tint(CAT[2], .14)))
+                cells.append(Paragraph('■', _style('mc', 8, OK, align=TA_CENTER)))
+                mtints.append((bi, ti, _tint(OK_C, .12)))
             elif s == 'hdr':
-                txt, col = '•' + ('&nbsp;&nbsp;%d' % n if n else ''), AMBER
-                mtints.append((bi, ti, _tint(CAT[3], .10)))
+                cells.append(Paragraph('•', _style('mc', 9, WARN, align=TA_CENTER)))
+                mtints.append((bi, ti, _tint(WARN_C, .09)))
             else:
-                txt, col = (str(n) if n else '·'), (SLATE if n else MUTED)
-            cells.append(Paragraph(txt, _style('mc', 8, col, align=TA_CENTER)))
+                cells.append(Paragraph('·', _style('mc', 8, MUTED, align=TA_CENTER)))
+        n = units(mt)
         mrows.append([Paragraph('<font color="#94a3b8">%d</font>&nbsp;&nbsp;%s'
-                                % (ti, _esc(t['name'])), _style('mn', 8, INK))] + cells +
+                                % (ti, _esc(t['name'])), _style('mn', 8, INK)),
+                      Paragraph('{:,}'.format(n) if n else
+                                '<font color="#cbd5e1">—</font>',
+                                _style('mu', 8, SLATE, align=TA_RIGHT))] + cells +
                      [Paragraph('%d/%d' % (done, len(bus)),
-                                _style('mt', 7.5, GREEN if done == len(bus) else MUTED,
+                                _style('mt', 7.5, OK if done == len(bus) else MUTED,
                                        bold=True, align=TA_CENTER))])
-    mw = [W * .30] + [(W * .70 - 16 * mm) / max(1, len(bus))] * len(bus) + [16 * mm]
+    mw = [W * .28, 22 * mm] + \
+         [(W * .72 - 40 * mm) / max(1, len(bus))] * len(bus) + [18 * mm]
     mtbl = Table(mrows, colWidths=mw, repeatRows=1, hAlign='LEFT')
-    ms = _table_base(len(codes) + 2)
+    ms = _table_base(len(codes) + 3)
     ms += [('LINEBELOW', (0, 0), (-1, -1), .4, LINE),
-           ('TOPPADDING', (0, 1), (-1, -1), 3), ('BOTTOMPADDING', (0, 1), (-1, -1), 3)]
+           ('LINEAFTER', (1, 0), (1, -1), .4, LINE),
+           ('TOPPADDING', (0, 1), (-1, -1), 3.2), ('BOTTOMPADDING', (0, 1), (-1, -1), 3.2)]
     ms += [('BACKGROUND', (c, r), (c, r), t) for c, r, t in mtints]
     mtbl.setStyle(TableStyle(ms))
-    story += [mtbl, Spacer(1, 5 * mm)]
+    story += [mtbl, Spacer(1, 3.5 * mm)]
 
-    # ── 2. ประเด็นที่ต้องตัดสินใจ ───────────────────────────────────
-    story += [CondPageBreak(45 * mm),
-              _sec_head('2.&nbsp;&nbsp;ประเด็นที่ต้องตัดสินใจ',
-                        'เรียงตามจำนวนหัวข้อที่ยังไม่ตรงกัน แล้วตามจำนวนเครื่องที่ใช้อยู่', W),
-              Spacer(1, 1.5 * mm)]
-    if decisions:
-        drows = [[_hcell('ประเภทเครื่อง'), _hcell('สถานะ', TA_CENTER),
-                  _hcell('หัวข้อที่แต่ละ BU ขอไม่ตรงกัน'), _hcell('BU ที่กรอกแล้ว'),
-                  _hcell('เครื่องที่ใช้อยู่', TA_RIGHT)]]
-        dstyle = []
-        for t, diffs, n in sorted(decisions, key=lambda d: (-len(d[1]), -d[2])):
-            mt = t['name']
-            ok = not diffs
-            drows.append([
-                Paragraph('<font color="#94a3b8">%d</font>&nbsp;&nbsp;%s'
-                          % (t['no'], _esc(mt)), _style('dn', 8.5, INK)),
-                Paragraph('<b>■ ตรงกัน</b>' if ok else '<b>◆ ต่าง %d</b>' % len(diffs),
-                          _style('ds', 8, GREEN if ok else AMBER, align=TA_CENTER)),
-                Paragraph(_esc(', '.join(diffs)) if diffs else
-                          '<font color="#94a3b8">— รวมเป็นสเปกกลางชุดเดียวได้ —</font>',
-                          _style('dd', 8, INK if diffs else MUTED)),
-                Paragraph(_chips([c for c in codes if state(mt, c) == 'val'], hue),
-                          _style('db', 8, SLATE, leading=11)),
-                Paragraph('{:,}'.format(n) if n else '—',
-                          _style('du', 8.5, SLATE, bold=True, align=TA_RIGHT))])
-            dstyle.append(('BACKGROUND', (0, len(drows) - 1), (-1, len(drows) - 1),
-                           _tint(CAT[2] if ok else CAT[3], .09)))
-        dt = Table(drows, colWidths=[W * .27, 17 * mm, W * .30, W * .21, 20 * mm],
-                   repeatRows=1, hAlign='LEFT')
-        dt.setStyle(TableStyle(_table_base(5) + dstyle +
-                               [('LINEBELOW', (0, 0), (-1, -1), .4, LINE)]))
-        story.append(dt)
     if hdr_only:
-        story += [Spacer(1, 2.5 * mm),
-                  Paragraph('<b>ตั้งหัวข้อไว้แล้วแต่ยังไม่มี BU ใดใส่ค่า:</b> ' +
-                            _esc(' · '.join('%d. %s' % (t['no'], t['name']) for t in hdr_only)),
-                            _style('ho', 8, AMBER, leading=12))]
-    rest = [t for t in types if t not in ready and t not in hdr_only]
+        story += [Paragraph('<font color="%s"><b>•</b></font>&nbsp; '
+                            '<b>ตั้งหัวข้อไว้แล้วแต่ยังไม่มี BU ใดใส่ค่า:</b> %s'
+                            % (WARN_C, _esc(' · '.join(
+                                '%d. %s (%s)' % (t['no'], t['name'],
+                                                 _units_txt(units(t['name'])) or 'ไม่มีเครื่องในระบบ')
+                                for t in hdr_only))),
+                            _style('ho', 8, SLATE, leading=12)), Spacer(1, 1.5 * mm)]
     if rest:
-        story += [Spacer(1, 1.5 * mm),
-                  Paragraph('<b>ยังไม่มี BU ใดกรอก:</b> ' +
-                            _esc(' · '.join('%d. %s' % (t['no'], t['name']) for t in rest)),
+        story += [Paragraph('<font color="#94a3b8"><b>·</b></font>&nbsp; '
+                            '<b>ยังไม่มี BU ใดกรอก:</b> %s'
+                            % _esc(' · '.join('%d. %s (%s)' % (t['no'], t['name'],
+                                                              _units_txt(units(t['name'])) or 'ไม่มีเครื่องในระบบ')
+                                              for t in rest)),
                             _style('rs', 8, MUTED, leading=12))]
+
+    story += [Spacer(1, 4 * mm),
+              Paragraph('รหัส BU: ' + ' '.join(_chip(c) + _esc(name_of[c]) + '&nbsp;&nbsp;'
+                                               for c in codes),
+                        _style('leg', 7.5, SLATE, leading=13))]
 
     if not ready:
         return story
 
-    # ── 3. ข้อกำหนดกลางที่เสนอ (หน้าเดียวจบ + ช่องลงนาม) ─────────────
+    # ══ หน้า 3 — ข้อกำหนดกลาง + ลงนาม ══════════════════════════════
     story += [PageBreak(),
               _sec_head('3.&nbsp;&nbsp;ข้อกำหนดกลางที่เสนอ — ทุกประเภทเครื่อง',
-                        'ค่าที่ BU ส่วนใหญ่ตรงกัน · ◆ = ยังมี BU ขอต่าง ดูรายละเอียดรายประเภท', W),
+                        'เอกสารชุดนี้ใช้แนบประกอบการจัดหาได้เมื่อลงนามครบ', W),
+              Spacer(1, 1.2 * mm),
+              _legend([(OK_C, '■', 'ทุก BU ที่กรอกตรงกันแล้ว'),
+                       (WARN_C, '■', 'ยังไม่สรุป — ตัวเลขคือจำนวนทางเลือกที่ต้องเลือก '
+                                     '(รายละเอียดหัวข้อ 4)')], W),
               Spacer(1, 1.5 * mm)]
 
     keys_all = _field_order([_spec_fields(P[t['name']][c])
-                             for t in ready for c in codes if state(t['name'], c) == 'val'])
-    keys_all = keys_all[:6]
+                             for t in ready for c in cols_of(t['name'])])[:6]
     brows = [[_hcell('ประเภทเครื่อง')] +
              [_hcell(_FIELD_LABEL.get(k, k.replace('x:', ''))) for k in keys_all]]
     bstyle = []
     for t in ready:
         mt   = t['name']
-        cols = [c for c in codes if state(mt, c) == 'val']
+        cols = cols_of(mt)
         F    = {c: _spec_fields(P[mt][c]) for c in cols}
+        wt   = {c: units(mt, c) for c in cols}
         row  = [Paragraph('<font color="#94a3b8">%d</font>&nbsp;&nbsp;<b>%s</b>'
                           % (t['no'], _esc(mt)), _style('bn', 8, INK, leading=10.5))]
-        for k in keys_all:
+        for ki, k in enumerate(keys_all, 1):
             pairs = [(c, F[c][k][1]) for c in cols if F[c].get(k) and F[c][k][1]]
             if not pairs:
-                row.append(Paragraph('<font color="#cbd5e1">—</font>',
-                                     _style('bv', 7.5, MUTED)))
+                row.append(Paragraph('<font color="#cbd5e1">—</font>', _style('bv', 7.5, MUTED)))
                 continue
-            g = _group_values(pairs, {c: units(mt, c) for c in cols})
+            g   = _group_values(pairs, wt)
             txt = _esc(_rep(g[0]))
             if len(g) > 1:
-                txt += '&nbsp;<font color="#b45309" size="7"><b>◆%d</b></font>' % len(g)
-                bstyle.append(('BACKGROUND', (keys_all.index(k) + 1, len(brows)),
-                               (keys_all.index(k) + 1, len(brows)), _tint(CAT[3], .10)))
+                txt += ('&nbsp;<font color="%s" size="7"><b>%d ทางเลือก</b></font>'
+                        % (WARN_C, len(g)))
+                bstyle.append(('BACKGROUND', (ki, len(brows)), (ki, len(brows)),
+                               _tint(WARN_C, .09)))
+            else:
+                bstyle.append(('BACKGROUND', (ki, len(brows)), (ki, len(brows)),
+                               _tint(OK_C, .07)))
             row.append(Paragraph(txt, _style('bv', 7.5, INK, leading=9.5)))
         brows.append(row)
     bw = [W * .21] + [(W * .79) / len(keys_all)] * len(keys_all)
@@ -1001,90 +1098,98 @@ def _spec_story(data, W):
     bt.setStyle(TableStyle(_table_base(len(keys_all) + 1) + bstyle +
                            [('LINEBELOW', (0, 0), (-1, -1), .4, LINE),
                             ('LINEAFTER', (0, 0), (0, -1), .4, LINE)]))
-    story += [bt, Spacer(1, 8 * mm)]
+    story += [bt, Spacer(1, 3 * mm),
+              Paragraph('หมายเหตุ — ยังไม่รวมจำนวนเครื่องที่แต่ละ BU จะเช่า/ซื้อและกรอบงบประมาณ '
+                        'ซึ่งจะสำรวจแยกภายหลัง',
+                        _style('bnote', 7.5, MUTED, leading=11)),
+              Spacer(1, 10 * mm)]
 
-    # ช่องลงนาม — ให้ผู้บริหารเซ็นได้จากตัวรายงานเลย ไม่ต้องทำใบปะหน้าอีกใบ
-    sign = [['', '', ''], ['', '', ''], ['', '', '']]
-    for i, role in enumerate(['ผู้จัดทำ / ฝ่ายเทคโนโลยีสารสนเทศ', 'ผู้ตรวจสอบ', 'ผู้อนุมัติ']):
-        sign[0][i] = Paragraph('&nbsp;', _style('sg0', 8))
-        sign[1][i] = Paragraph('ลงชื่อ ..............................................'
-                               '&nbsp;&nbsp;&nbsp;วันที่ ................',
-                               _style('sg1', 8, SLATE))
-        sign[2][i] = Paragraph(role, _style('sg2', 7.5, MUTED))
+    sign = [[Paragraph('&nbsp;', _style('sg0', 8)) for _ in range(3)],
+            [Paragraph('ลงชื่อ ..............................................'
+                       '&nbsp;&nbsp;&nbsp;วันที่ ................', _style('sg1', 8, SLATE))
+             for _ in range(3)],
+            [Paragraph(r, _style('sg2', 7.5, MUTED))
+             for r in ('ผู้จัดทำ / ฝ่ายเทคโนโลยีสารสนเทศ', 'ผู้ตรวจสอบ', 'ผู้อนุมัติ')]]
     stbl = Table(sign, colWidths=[W / 3] * 3, hAlign='LEFT')
     stbl.setStyle(TableStyle([('TOPPADDING', (0, 0), (-1, -1), 2),
                               ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
                               ('TOPPADDING', (0, 1), (-1, 1), 10)]))
     story.append(stbl)
 
-    # ── 4+. รายประเภท — ประเภทละ 1 หน้า ────────────────────────────
+    # ══ หน้า 4.x — รายประเภท ═══════════════════════════════════════
+    RAIL   = 4 * mm
     LBL_W  = 24 * mm
-    CONS_W = (W - LBL_W) * .44
-    DIFF_W = W - LBL_W - CONS_W
+    CONS_W = (W - LBL_W - RAIL) * .44
+    DIFF_W = W - LBL_W - RAIL - CONS_W
 
-    for t in ready:
+    for si, t in enumerate(ready, 1):
         mt      = t['name']
-        cols    = [c for c in codes if state(mt, c) == 'val']
+        cols    = cols_of(mt)
         pending = [c for c in codes if state(mt, c) != 'val']
         F       = {c: _spec_fields(P[mt][c]) for c in cols}
         wt      = {c: units(mt, c) for c in cols}
-        labels  = {}
-        for c in cols:
-            for k, (lbl, _) in F[c].items():
-                labels.setdefault(k, _FIELD_LABEL.get(k, lbl))
+        by_key  = {k: (lbl, g) for k, lbl, g, _ in conflicts[mt] + settled[mt]}
 
-        rows_t = [[_hcell('หัวข้อ'), _hcell('ข้อกำหนดกลางที่เสนอ'),
-                   _hcell('BU ที่ขอต่างจากข้อกำหนดกลาง')]]
+        rows_t = [[Paragraph('', _style('rr', 7)), _hcell('หัวข้อ'),
+                   _hcell('ข้อกำหนดกลางที่เสนอ'), _hcell('ทางเลือกอื่นที่ BU ขอ — ต้องเลือก')]]
         tints, diff_labels = [], []
         for k in _field_order([F[c] for c in cols]):
-            pairs = [(c, F[c][k][1]) for c in cols if F[c].get(k) and F[c][k][1]]
-            lbl   = labels.get(k, k)
-            if not pairs:
-                rows_t.append([Paragraph(_esc(lbl), _style('fk', 8, SLATE, bold=True)),
+            lbl = (by_key.get(k) or (_FIELD_LABEL.get(k) or
+                                     next((F[c][k][0] for c in cols if F[c].get(k)), k),))[0]
+            if k not in by_key:                       # ตั้งหัวข้อไว้แต่ยังไม่มีใครใส่ค่า
+                rows_t.append([Paragraph('', _style('rr', 7)),
+                               Paragraph(_esc(lbl), _style('fk', 8, SLATE, bold=True)),
                                Paragraph('<font color="#b6c2cf">— ยังไม่มี BU ใดระบุค่า —</font>',
                                          _style('fv', 8, MUTED)),
                                Paragraph('', _style('fd', 8))])
-                tints.append((len(rows_t) - 1, colors.HexColor('#f8fafc')))
+                tints.append((len(rows_t) - 1, colors.HexColor('#f8fafc'), colors.HexColor('#e2e8f0')))
                 continue
-            g    = _group_values(pairs, wt)
-            main = g[0]
+            g  = by_key[k][1]
+            gu = lambda grp: sum(wt.get(c, 0) for c, _ in grp)
             cons = ('<font size="9">%s</font><br/>%s'
-                    '<font size="6.5" color="#94a3b8">%d/%d BU</font>'
-                    % (_esc(_rep(main)), _chips([c for c, _ in main], hue), len(main), len(cols)))
+                    '<font size="6.8" color="#94a3b8">%d/%d BU%s</font>'
+                    % (_esc(_rep(g[0])), _chips([c for c, _ in g[0]], 'ok'),
+                       len(g[0]), len(cols),
+                       ('&nbsp;· ' + _units_txt(gu(g[0]))) if gu(g[0]) else ''))
             if len(g) > 1:
                 diff_labels.append(lbl)
-                dtxt = '<br/>'.join('%s<font size="8">%s</font>'
-                                    % (_chips([c for c, _ in grp], hue), _esc(_rep(grp)))
-                                    for grp in g[1:])
-            elif len(cols) > 1:
-                dtxt = '<font color="#008300"><b>■ ทุก BU ที่กรอกตรงกัน</b></font>'
+                dtxt = '<br/>'.join(
+                    '%s<font size="8">%s</font>%s'
+                    % (_chips([c for c, _ in grp], 'warn'), _esc(_rep(grp)),
+                       ('&nbsp;<font size="6.8" color="#94a3b8">%s</font>' % _units_txt(gu(grp)))
+                       if gu(grp) else '')
+                    for grp in g[1:])
             else:
-                dtxt = ''        # มี BU เดียว — บอกครั้งเดียวใต้ตาราง ไม่ต้องซ้ำทุกแถว
-            rows_t.append([Paragraph(_esc(lbl), _style('fk', 8, SLATE, bold=True)),
+                dtxt = ''         # ไม่มีข้อขัดแย้ง — แถบสีซ้ายบอกแล้ว ไม่ต้องเขียนซ้ำทุกแถว
+            rows_t.append([Paragraph('', _style('rr', 7)),
+                           Paragraph(_esc(lbl), _style('fk', 8, SLATE, bold=True)),
                            Paragraph(cons, _style('fv', 8, INK, leading=11)),
                            Paragraph(dtxt, _style('fd', 8, INK, leading=11))])
-            tints.append((len(rows_t) - 1, _tint(CAT[3] if len(g) > 1 else CAT[2], .10)))
+            warn = len(g) > 1
+            tints.append((len(rows_t) - 1, _tint(WARN_C if warn else OK_C, .09),
+                          WARN if warn else OK))
 
-        # ข้อความอิสระ (บรรทัดที่ไม่ได้เขียนเป็น 'หัวข้อ: ค่า')
         free = [(c, ' · '.join(P[mt][c][0]['free'])) for c in cols if P[mt][c][0]['free']]
         if free:
-            rows_t.append([Paragraph('หมายเหตุจาก BU', _style('fk', 8, SLATE, bold=True)),
-                           Paragraph('<br/>'.join('%s%s' % (_chip(c, hue[c]), _esc(v))
-                                                  for c, v in free),
+            rows_t.append([Paragraph('', _style('rr', 7)),
+                           Paragraph('หมายเหตุจาก BU', _style('fk', 8, SLATE, bold=True)),
+                           Paragraph('<br/>'.join('%s%s' % (_chip(c), _esc(v)) for c, v in free),
                                      _style('fv', 8, INK, leading=11)),
                            Paragraph('', _style('fd', 8))])
-            tints.append((len(rows_t) - 1, colors.HexColor('#fbfcfe')))
+            tints.append((len(rows_t) - 1, colors.HexColor('#fbfcfe'), colors.HexColor('#e2e8f0')))
 
-        ft = Table(rows_t, colWidths=[LBL_W, CONS_W, DIFF_W], repeatRows=1, hAlign='LEFT')
-        fs = _table_base(3) + [('LINEBELOW', (0, 0), (-1, -1), .4, LINE),
-                               ('LINEAFTER', (1, 1), (1, -1), .4, LINE)]
-        fs += [('BACKGROUND', (0, r), (-1, r), c) for r, c in tints]
+        ft = Table(rows_t, colWidths=[RAIL, LBL_W, CONS_W, DIFF_W], repeatRows=1, hAlign='LEFT')
+        fs = _table_base(4) + [('LINEBELOW', (0, 0), (-1, -1), .4, LINE),
+                               ('LINEAFTER', (2, 1), (2, -1), .4, LINE),
+                               ('LEFTPADDING', (0, 0), (0, -1), 0),
+                               ('RIGHTPADDING', (0, 0), (0, -1), 0)]
+        # แถบสีซ้ายบอกสถานะรายแถว — อ่านได้ก่อนอ่านตัวหนังสือ
+        fs += [('BACKGROUND', (1, r), (-1, r), bg) for r, bg, _ in tints]
+        fs += [('BACKGROUND', (0, r), (0, r), rail) for r, _, rail in tints]
         ft.setStyle(TableStyle(fs))
 
-        # ทางเลือกอื่นที่ BU เสนอไว้ในช่องเดียวกัน (Spec #2, #3)
         alts = [(c, len(P[mt][c])) for c in cols if len(P[mt][c]) > 1]
 
-        # แถบอ้างอิง — รุ่นที่เช่าอยู่จริง (จาก eDevice/Sheets ไม่ใช่สิ่งที่ BU กรอก)
         ref = [[_hcell('BU'), _hcell('รุ่นที่เช่าอยู่ (ล่าสุด)'), _hcell('ปีที่เริ่มเช่า', TA_CENTER),
                 _hcell('ค่าเช่า/เครื่อง/เดือน', TA_RIGHT), _hcell('รุ่นนี้', TA_RIGHT),
                 _hcell('รวมทุกรุ่น', TA_RIGHT)]]
@@ -1093,7 +1198,7 @@ def _spec_story(data, W):
             if not lst:
                 continue
             h = lst[0]
-            ref.append([Paragraph(_chip(c, hue[c]), _style('rb', 8)),
+            ref.append([Paragraph(_chip(c), _style('rb', 8)),
                         Paragraph(_esc(h['model']) +
                                   ('<font size="6.5" color="#94a3b8">&nbsp;&nbsp;+อีก %d รุ่น</font>'
                                    % (len(lst) - 1) if len(lst) > 1 else ''),
@@ -1102,64 +1207,62 @@ def _spec_story(data, W):
                         Paragraph('—' if h.get('monthly') is None
                                   else '{:,} ฿'.format(int(h['monthly'])),
                                   _style('rc', 8, SLATE, align=TA_RIGHT)),
-                        Paragraph('{:,}'.format(h['count']),
-                                  _style('rn', 8, SLATE, align=TA_RIGHT)),
+                        Paragraph('{:,}'.format(h['count']), _style('rn', 8, SLATE, align=TA_RIGHT)),
                         Paragraph('{:,}'.format(units(mt, c)),
                                   _style('rt', 8, INK, bold=True, align=TA_RIGHT))])
         rt = None
         if len(ref) > 1:
             ref.append([Paragraph('', _style('rz', 8)),
-                        Paragraph('รวมทุก BU', _style('rz', 8, SLATE, bold=True)),
-                        Paragraph('', _style('rz', 8)), Paragraph('', _style('rz', 8)),
-                        Paragraph('', _style('rz', 8)),
-                        Paragraph('{:,}'.format(units(mt)),
+                        Paragraph('รวมทุก BU', _style('rz', 8, SLATE, bold=True))] +
+                       [Paragraph('', _style('rz', 8))] * 3 +
+                       [Paragraph('{:,}'.format(units(mt)),
                                   _style('rz', 8.5, INK, bold=True, align=TA_RIGHT))])
             rt = Table(ref, colWidths=[16 * mm, W - 16 * mm - 112 * mm,
-                                       28 * mm, 34 * mm, 24 * mm, 26 * mm],
-                       hAlign='LEFT')
+                                       28 * mm, 34 * mm, 24 * mm, 26 * mm], hAlign='LEFT')
             rt.setStyle(TableStyle(_table_base(6) + [
                 ('LINEABOVE', (0, -1), (-1, -1), .8, SLATE),
                 ('BACKGROUND', (0, -1), (-1, -1), WHITE),
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#64748b')),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f6f8fb')),
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(NEU_C)),
+                ('BACKGROUND', (0, 1), (-1, -2), colors.HexColor('#f6f8fb')),
                 ('TOPPADDING', (0, 1), (-1, -1), 2.5), ('BOTTOMPADDING', (0, 1), (-1, -1), 2.5),
                 ('LINEBELOW', (0, 0), (-1, -1), .4, LINE)]))
 
         if diff_labels:
-            note = ('<font color="#b45309"><b>◆ ต้องตัดสินใจ %d หัวข้อ:</b> %s</font>'
-                    % (len(diff_labels), _esc(', '.join(diff_labels))))
+            note = ('<font color="%s"><b>◆ ต้องเลือก %d หัวข้อ:</b> %s</font>'
+                    % (WARN_C, len(diff_labels), _esc(', '.join(diff_labels))))
         elif len(cols) > 1:
-            note = ('<font color="#008300"><b>■ ทุก BU ที่กรอกกำหนดตรงกัน — '
-                    'รวมเป็นสเปกกลางชุดเดียวได้ทันที</b></font>')
+            note = ('<font color="%s"><b>■ ทุก BU ที่กรอกตรงกันทุกหัวข้อ — '
+                    'สรุปเป็นข้อกำหนดกลางได้ทันที</b></font>' % OK_C)
         else:
-            note = ('<font color="#94a3b8">มี BU เดียวที่กำหนดไว้ — '
-                    'ยังไม่มีข้อมูลเทียบจาก BU อื่น</font>')
+            note = ('<font color="#94a3b8">มี BU เดียวที่กำหนดไว้ (%s) — '
+                    'ยังไม่มีข้อมูลเทียบจาก BU อื่น</font>' % _esc(cols[0]))
         if alts:
-            note += ('&nbsp;&nbsp;<font color="#475569">· มีทางเลือกอื่นที่เสนอไว้: %s '
-                     '(ดูภาคผนวก)</font>'
-                     % _esc(', '.join('%s %d ทางเลือก' % (c, n) for c, n in alts)))
+            note += ('&nbsp;&nbsp;<font color="#475569">· บาง BU เสนอไว้หลายชุด: %s '
+                     '(ยกชุดแรกขึ้นเทียบ ชุดที่เหลือดูภาคผนวก)</font>'
+                     % _esc(', '.join('%s %d ชุด' % (c, n) for c, n in alts)))
         if pending:
             note += ('<br/><font color="#94a3b8">ยังไม่กรอก: %s</font>'
                      % _esc(' · '.join(pending)))
 
         story += [PageBreak(),
-                  _sec_head('%d.&nbsp;&nbsp;%s' % (t['no'], _esc(mt)),
-                            'กรอกแล้ว %d/%d BU&nbsp;&nbsp;|&nbsp;&nbsp;เครื่องที่ใช้อยู่ %s เครื่อง'
+                  _sec_head('4.%d&nbsp;&nbsp;%s' % (si, _esc(mt)),
+                            'กรอกแล้ว %d/%d BU&nbsp;&nbsp;·&nbsp;&nbsp;เครื่องที่ใช้อยู่ %s'
                             % (len(cols), len(bus), '{:,}'.format(units(mt))), W),
-                  Spacer(1, .8 * mm),
+                  Spacer(1, 1 * mm),
                   Paragraph(_esc(t['full_name']), _style('fn', 7.5, MUTED)),
                   Spacer(1, 2.5 * mm), ft,
                   Spacer(1, 1.5 * mm), Paragraph(note, _style('nt', 8, SLATE, leading=11.5))]
         if rt is not None:
-            story += [Spacer(1, 4 * mm),
-                      Paragraph('ข้อมูลอ้างอิง — รุ่นที่แต่ละ BU เช่าอยู่ในปัจจุบัน',
+            story += [Spacer(1, 4.5 * mm),
+                      Paragraph('ข้อมูลอ้างอิง — รุ่นที่แต่ละ BU เช่าอยู่ในปัจจุบัน '
+                                '(จากระบบทรัพย์สิน ไม่ใช่สิ่งที่ BU กรอก)',
                                 _style('rh', 8, SLATE, bold=True)),
-                      Spacer(1, 1 * mm), rt]
+                      Spacer(1, 1.2 * mm), rt]
 
-    # ── ภาคผนวก — ข้อความต้นฉบับที่แต่ละ BU กรอก ────────────────────
+    # ══ ภาคผนวก ก — ต้นฉบับ ════════════════════════════════════════
     story += [PageBreak(),
               _sec_head('ภาคผนวก&nbsp;&nbsp;ก.&nbsp;&nbsp;ข้อความที่แต่ละ BU กรอก (ตามต้นฉบับ)',
-                        'ใช้อ้างอิงเมื่อมีข้อโต้แย้ง — รวมทางเลือกที่ยังไม่ได้ยกขึ้นตารางเทียบ', W),
+                        'ใช้อ้างอิงเมื่อมีข้อโต้แย้ง — รวมชุดที่ยังไม่ได้ยกขึ้นตารางเทียบ', W),
               Spacer(1, 1.5 * mm)]
     arows = [[_hcell('ประเภทเครื่อง'), _hcell('BU'), _hcell('ข้อความที่กรอก'),
               _hcell('แก้ไขล่าสุด', TA_RIGHT)]]
@@ -1173,7 +1276,7 @@ def _spec_story(data, W):
             arows.append([
                 Paragraph('<font color="#94a3b8">%d</font>&nbsp;&nbsp;%s'
                           % (t['no'], _esc(mt)), _style('an', 7.5, INK, leading=10)),
-                Paragraph(_chip(c, hue[c]), _style('ab', 7.5)),
+                Paragraph(_chip(c), _style('ab', 7.5)),
                 Paragraph('<br/>'.join(_esc(x) for x in
                                        (' '.join(l.split()) for l in raw.splitlines()) if x),
                           _style('av', 7.5, INK, leading=10)),
@@ -1188,11 +1291,6 @@ def _spec_story(data, W):
                             ('ROWBACKGROUNDS', (0, 1), (-1, -1),
                              [WHITE, colors.HexColor('#fafcff')])]))
     story.append(at)
-
-    story += [Spacer(1, 3 * mm),
-              Paragraph('BU ทั้งหมด: ' + ' '.join(_chip(c, hue[c]) + _esc(name_of[c]) + '&nbsp;&nbsp;'
-                                                  for c in codes),
-                        _style('leg', 7.5, SLATE, leading=12))]
     return story
 
 
