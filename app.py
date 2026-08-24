@@ -1596,6 +1596,197 @@ def export_assets():
 
 
 
+def _rental_rows(data):
+    """เครื่องเช่าที่ยัง active — ใช้เกณฑ์ชุดเดียวกับ /api/dashboard/rental
+    เพื่อให้ยอดใน export ตรงกับตัวเลขบนหน้าจอ (ไม่งั้นคนใช้จะงงว่าทำไมไม่เท่ากัน)"""
+    RESOLVED = {'returned', 'bought', 'renewed', 'extended'}
+    ED_SKIP  = {'spare'}
+    return [r for r in data
+            if r.get('ownership') == 'เช่า'
+            and r['contract_status'] != 'returned'
+            and r.get('resolution', 'pending') not in RESOLVED
+            and (r.get('edevice_status') or '').lower() not in ED_SKIP]
+
+
+@app.route('/api/rental/export-options', methods=['GET'])
+def rental_export_options():
+    """ตัวเลือกที่มีจริงในข้อมูล สำหรับ dropdown หน้า export
+    ส่งจำนวนไปด้วยเพื่อให้เห็นก่อนกดว่าจะได้กี่เครื่อง"""
+    from collections import Counter
+    rows = _rental_rows(fetch_assets_raw())
+
+    years = Counter(r['end_date'][:4] for r in rows if r.get('end_date'))
+    types = Counter(r.get('machine_type') or '' for r in rows)
+    bus   = Counter(r.get('emp_bu_code') or '' for r in rows)
+
+    # ประเภทเครื่องเรียงตามลำดับแค็ตตาล็อกมาตรฐาน ไม่ใช่ตามจำนวน
+    type_list = sorted(((t, n) for t, n in types.items() if t),
+                       key=lambda x: (_machine_rank(x[0]), x[0]))
+    return jsonify({
+        'total':      len(rows),
+        'years':      [{'year': y, 'count': n} for y, n in sorted(years.items())],
+        'no_year':    sum(1 for r in rows if not r.get('end_date')),
+        'types':      [{'name': t, 'count': n} for t, n in type_list],
+        'no_type':    types.get('', 0),
+        'bus':        [{'bu_code': b, 'count': n}
+                       for b, n in sorted(bus.items()) if b],
+        'no_bu':      bus.get('', 0),
+    })
+
+
+@app.route('/api/rental/export', methods=['GET'])
+def rental_export():
+    """Export เครื่องเช่าเป็น Excel สำหรับทำรายงานขอเช่าปีถัดไป
+
+    ตัวกรอง (ว่าง = ไม่กรอง): bu, year, machine_type — คั่นหลายค่าด้วย ,
+    year = ปีที่หมดสัญญา (ค.ศ.) เพราะเครื่องที่หมดปีไหน คือชุดที่ต้องขอเช่าใหม่ปีนั้น
+    include_no_year / include_no_type = 1 → รวมเครื่องที่ไม่มีข้อมูลด้านนั้นเข้ามาด้วย
+    (ข้อมูลจริงมีเครื่องเช่าที่ไม่มีวันหมดสัญญา ~60% ถ้าไม่รวมยอดจะหายไปเยอะ)
+    """
+    from collections import defaultdict
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    a = request.args
+    split = lambda k: [x.strip() for x in (a.get(k) or '').split(',') if x.strip()]
+    bu_f, year_f, type_f = split('bu'), split('year'), split('machine_type')
+    inc_no_year = a.get('include_no_year') == '1'
+    inc_no_type = a.get('include_no_type') == '1'
+
+    rows = _rental_rows(fetch_assets_raw())
+    if bu_f:
+        rows = [r for r in rows if (r.get('emp_bu_code') or '') in bu_f]
+    def keep_year(r):
+        # ไม่มีวันหมดสัญญา = ตัดสินด้วย include_no_year ไม่ใช่ตัดทิ้งเงียบๆ
+        return r['end_date'][:4] in year_f if r.get('end_date') else inc_no_year
+
+    def keep_type(r):
+        return r['machine_type'] in type_f if r.get('machine_type') else inc_no_type
+
+    if year_f:
+        rows = [r for r in rows if keep_year(r)]
+    if type_f:
+        rows = [r for r in rows if keep_type(r)]
+
+    UNSPEC = 'ยังไม่ระบุประเภท'
+    mt_of  = lambda r: r.get('machine_type') or UNSPEC
+    bu_of  = lambda r: r.get('emp_bu_code') or 'ไม่ระบุ BU'
+    rows.sort(key=lambda r: (_machine_rank(mt_of(r)), mt_of(r), bu_of(r),
+                             r.get('end_date') or '9999', r.get('asset_no') or ''))
+
+    wb = Workbook()
+    HFILL  = PatternFill('solid', fgColor='1E3A5F')
+    SUBFIL = PatternFill('solid', fgColor='F1F5F9')
+    THIN   = Side(style='thin', color='D8DEE7')
+    BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+
+    def style_header(ws, ncols, row=1):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=row, column=c)
+            cell.font = Font(color='FFFFFF', bold=True, size=10)
+            cell.fill = HFILL
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    def autosize(ws, minw=9, maxw=42):
+        for col in ws.columns:
+            width = max((len(str(c.value or '')) for c in col), default=0)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = \
+                min(max(width + 2, minw), maxw)
+
+    # ── ชีท 1: สรุป — ประเภทเครื่อง × BU (เอาไปแปะรายงานขอเช่าได้เลย) ──
+    ws = wb.active
+    ws.title = 'สรุป'
+
+    bu_cols = sorted({bu_of(r) for r in rows})
+    mt_keys = sorted({mt_of(r) for r in rows}, key=lambda m: (_machine_rank(m), m))
+    cnt   = defaultdict(int)
+    money = defaultdict(float)
+    for r in rows:
+        cnt[(mt_of(r), bu_of(r))]  += 1
+        money[(mt_of(r), bu_of(r))] += r.get('monthly_charge') or 0
+
+    filters_txt = ' · '.join(filter(None, [
+        'BU: ' + ', '.join(bu_f) if bu_f else 'ทุก BU',
+        'ปีหมดสัญญา: ' + ', '.join(year_f) if year_f else 'ทุกปี',
+        'ประเภทเครื่อง: ' + ', '.join(type_f) if type_f else 'ทุกประเภท',
+        'รวมเครื่องที่ไม่มีวันหมดสัญญา' if inc_no_year and year_f else None,
+        'รวมเครื่องที่ยังไม่ระบุประเภท' if inc_no_type and type_f else None,
+    ]))
+    ws.append(['สรุปเครื่องเช่า เพื่อจัดทำรายงานขอเช่า'])
+    ws['A1'].font = Font(bold=True, size=13)
+    ws.append(['ตัวกรอง: ' + filters_txt])
+    ws['A2'].font = Font(size=9, color='64748B')
+    ws.append(['ออกรายงานเมื่อ ' + datetime.now().strftime('%d/%m/%Y %H:%M น.') +
+               '  ·  รวม %d เครื่อง' % len(rows)])
+    ws['A3'].font = Font(size=9, color='64748B')
+    ws.append([])
+
+    head_row = ws.max_row + 1
+    ws.append(['ประเภทเครื่อง'] + bu_cols + ['รวม', 'ค่าเช่ารวม/เดือน (฿)'])
+    style_header(ws, 2 + len(bu_cols), head_row)
+
+    for mt in mt_keys:
+        line = [mt] + [cnt[(mt, b)] or '' for b in bu_cols]
+        line += [sum(cnt[(mt, b)] for b in bu_cols),
+                 round(sum(money[(mt, b)] for b in bu_cols))]
+        ws.append(line)
+    total_row = ws.max_row + 1
+    ws.append(['รวมทุกประเภท'] +
+              [sum(cnt[(m, b)] for m in mt_keys) for b in bu_cols] +
+              [len(rows), round(sum(money.values()))])
+    for c in range(1, 3 + len(bu_cols)):
+        ws.cell(row=total_row, column=c).font = Font(bold=True)
+        ws.cell(row=total_row, column=c).fill = SUBFIL
+    for row in ws.iter_rows(min_row=head_row, max_row=total_row,
+                            max_col=2 + len(bu_cols)):
+        for cell in row:
+            cell.border = BORDER
+            if cell.column > 1:
+                cell.alignment = Alignment(horizontal='right')
+    for r_ in range(head_row + 1, total_row + 1):
+        ws.cell(row=r_, column=2 + len(bu_cols)).number_format = '#,##0'
+    ws.freeze_panes = ws.cell(row=head_row + 1, column=2)
+    autosize(ws)
+
+    # ── ชีท 2: รายการเครื่อง — ไว้ตรวจสอบรายตัว ─────────────────────
+    ws2 = wb.create_sheet('รายการเครื่อง')
+    headers = ['ประเภทเครื่อง', 'BU', 'Asset No.', 'รหัสเครื่อง', 'S/N',
+               'ประเภท (eDevice)', 'รุ่น', 'ผู้ถือครอง', 'ตำแหน่ง', 'แผนก',
+               'วันเริ่มเช่า', 'วันหมดสัญญา', 'ปีหมดสัญญา', 'เหลือ (วัน)',
+               'สถานะสัญญา', 'สถานะ eDevice', 'ค่าเช่า/เดือน (฿)', 'PO']
+    ws2.append(headers)
+    style_header(ws2, len(headers))
+    ST = {'ok': 'อยู่ในระยะสัญญา', 'warning': 'ใกล้หมด (180 วัน)',
+          'critical': 'วิกฤต (90 วัน)', 'expired': 'หมดสัญญาแล้ว',
+          'unknown': 'ไม่มีข้อมูลสัญญา'}
+    for r in rows:
+        ws2.append([
+            mt_of(r), bu_of(r), r.get('asset_no', ''), r.get('computer_id', ''),
+            r.get('serial_no', ''), r.get('asset_type', ''),
+            r.get('brand') or r.get('model') or '',
+            r.get('user_name', ''), r.get('emp_position', ''),
+            r.get('emp_dept') or r.get('dept_sheet') or '',
+            r.get('start_date', ''), r.get('end_date', ''),
+            (r['end_date'][:4] if r.get('end_date') else ''),
+            r.get('days_remaining'), ST.get(r.get('contract_status'), ''),
+            r.get('edevice_status', ''), r.get('monthly_charge') or 0,
+            r.get('po_no', ''),
+        ])
+    for row in ws2.iter_rows(min_row=2, max_row=ws2.max_row):
+        row[16].number_format = '#,##0.00'
+    ws2.auto_filter.ref = ws2.dimensions
+    ws2.freeze_panes = 'A2'
+    autosize(ws2)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    tag = '_'.join(filter(None, ['-'.join(bu_f), '-'.join(year_f)])) or 'all'
+    fname = f"rental_plan_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
+
+
 @app.route('/api/assets/report.pdf', methods=['GET'])
 def asset_report_pdf():
     """รายงาน PDF — ประเภทเครื่อง × ตำแหน่งงาน ตาม filter ที่หน้าจอเลือกไว้"""

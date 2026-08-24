@@ -551,6 +551,51 @@
 
   <!-- ========== Tab 2: บริหารสัญญาเช่า ========== -->
   <div id="dash-pane-rental" class="dash-pane" style="display:none">
+
+    <!-- Export เพื่อทำรายงานขอเช่าปีถัดไป -->
+    <div class="dash-panel" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <h3 style="margin:0">📤 Export ข้อมูลเช่า — สำหรับทำรายงานขอเช่าปีถัดไป</h3>
+          <p style="font-size:.75rem;color:#94a3b8;margin:4px 0 0">
+            เลือก BU / ปีที่หมดสัญญา / ประเภทเครื่อง แล้วดาวน์โหลดเป็น Excel
+            (ชีทสรุปนับจำนวน + ชีทรายการเครื่อง)
+          </p>
+        </div>
+        <button class="btn btn-primary" onclick="exportRental(this)" id="rx-btn">
+          ⬇ ดาวน์โหลด Excel
+        </button>
+      </div>
+
+      <div class="rx-grid">
+        <div class="rx-field">
+          <label>BU <span id="rx-bu-note"></span></label>
+          <div id="rx-bu" class="rx-checks"></div>
+        </div>
+        <div class="rx-field">
+          <label>ปีที่หมดสัญญา <span id="rx-year-note"></span></label>
+          <div id="rx-year" class="rx-checks"></div>
+          <label class="rx-inc" id="rx-inc-year-wrap">
+            <input type="checkbox" id="rx-inc-year" onchange="updateRentalPreview()">
+            <span>รวมเครื่องที่ไม่มีวันหมดสัญญา (<b id="rx-no-year">0</b> เครื่อง)</span>
+          </label>
+        </div>
+        <div class="rx-field">
+          <label>ประเภทเครื่อง <span id="rx-type-note"></span></label>
+          <div id="rx-type" class="rx-checks"></div>
+          <label class="rx-inc" id="rx-inc-type-wrap">
+            <input type="checkbox" id="rx-inc-type" onchange="updateRentalPreview()">
+            <span>รวมเครื่องที่ยังไม่ระบุประเภท (<b id="rx-no-type">0</b> เครื่อง)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="rx-foot">
+        <span id="rx-preview">—</span>
+        <button class="btn btn-sm" onclick="clearRentalExport()">ล้างตัวกรอง</button>
+      </div>
+    </div>
+
     <!-- Summary cards -->
     <div class="dash-grid" style="grid-template-columns:repeat(7,1fr)">
       <div class="stat-card">

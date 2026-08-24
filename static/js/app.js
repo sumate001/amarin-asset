@@ -1811,6 +1811,126 @@ function switchDashTab(name) {
   document.querySelectorAll('.dash-pane').forEach(p => p.style.display = 'none');
   const pane = document.getElementById('dash-pane-' + name);
   if (pane) pane.style.display = '';
+  if (name === 'rental') loadRentalExportOptions();
+}
+
+// ==============================
+// ---- Export เครื่องเช่า (ทำรายงานขอเช่าปีถัดไป) ----
+// ==============================
+
+let rentalOpts = null;   // ตัวเลือก + จำนวนจาก /api/rental/export-options
+
+/** โหลดตัวเลือกจากข้อมูลจริง — โหลดครั้งเดียวต่อการเปิดหน้า */
+async function loadRentalExportOptions() {
+  if (rentalOpts) return;
+  try { rentalOpts = await api('/api/rental/export-options'); }
+  catch (e) { return; }
+
+  const o = rentalOpts;
+  const chk = (group, val, label, n) => `
+    <label class="rx-chk" data-g="${group}" data-v="${esc(val)}">
+      <input type="checkbox" onchange="onRentalChk(this)">
+      <span>${esc(label)}</span><span class="n">${n.toLocaleString()}</span>
+    </label>`;
+
+  document.getElementById('rx-bu').innerHTML =
+    o.bus.map(b => chk('bu', b.bu_code, b.bu_code, b.count)).join('');
+  document.getElementById('rx-year').innerHTML =
+    o.years.map(y => chk('year', y.year, y.year, y.count)).join('') ||
+    '<span style="font-size:.75rem;color:#94a3b8">ไม่มีเครื่องที่ระบุวันหมดสัญญา</span>';
+  document.getElementById('rx-type').innerHTML =
+    o.types.map(t => chk('machine_type', t.name, t.name, t.count)).join('');
+
+  document.getElementById('rx-no-year').textContent = o.no_year.toLocaleString();
+  document.getElementById('rx-no-type').textContent = o.no_type.toLocaleString();
+
+  // เตือนไว้ตรงหัวข้อว่าข้อมูลไม่ครบแค่ไหน จะได้ไม่เข้าใจผิดว่ากรองแล้วได้ครบ
+  const pct = n => Math.round(n / Math.max(1, o.total) * 100);
+  if (o.no_bu)
+    document.getElementById('rx-bu-note').textContent =
+      `— ยังไม่ระบุ BU ${o.no_bu.toLocaleString()} เครื่อง (ไม่อยู่ในตัวเลือก)`;
+  if (o.no_year)
+    document.getElementById('rx-year-note').textContent =
+      `— ไม่มีข้อมูล ${o.no_year.toLocaleString()} เครื่อง (${pct(o.no_year)}%)`;
+  if (o.no_type)
+    document.getElementById('rx-type-note').textContent =
+      `— ไม่มีข้อมูล ${o.no_type.toLocaleString()} เครื่อง (${pct(o.no_type)}%)`;
+
+  updateRentalPreview();
+}
+
+function onRentalChk(input) {
+  input.closest('.rx-chk').classList.toggle('on', input.checked);
+  updateRentalPreview();
+}
+
+function rentalPicked(group) {
+  return [...document.querySelectorAll(`.rx-chk[data-g="${group}"] input:checked`)]
+    .map(i => i.closest('.rx-chk').dataset.v);
+}
+
+/** นับล่วงหน้าว่าจะได้กี่เครื่อง — ให้เห็นผลก่อนกดดาวน์โหลด
+ *  นับจาก count ของแต่ละตัวเลือกได้เฉพาะตอนกรองแกนเดียว ถ้ากรองหลายแกน
+ *  จำนวนจริงเป็น intersection ซึ่งฝั่ง client ไม่มีข้อมูลพอจะคำนวณ */
+function updateRentalPreview() {
+  if (!rentalOpts) return;
+  const o = rentalOpts;
+  const bu = rentalPicked('bu'), yr = rentalPicked('year'), mt = rentalPicked('machine_type');
+
+  // ช่อง "รวมที่ไม่มีข้อมูล" มีความหมายเฉพาะตอนกรองแกนนั้นจริงๆ
+  document.getElementById('rx-inc-year-wrap').classList.toggle('show', yr.length > 0 && o.no_year > 0);
+  document.getElementById('rx-inc-type-wrap').classList.toggle('show', mt.length > 0 && o.no_type > 0);
+
+  const incY = document.getElementById('rx-inc-year').checked;
+  const incT = document.getElementById('rx-inc-type').checked;
+  const sum  = (list, picked, key) =>
+    list.filter(x => picked.includes(x[key])).reduce((s, x) => s + x.count, 0);
+
+  const axes = [bu.length, yr.length, mt.length].filter(n => n > 0).length;
+  let txt;
+  if (axes === 0) {
+    txt = `ไม่ได้กรอง — จะได้ <b>${o.total.toLocaleString()}</b> เครื่อง (เครื่องเช่าทั้งหมด)`;
+  } else if (axes === 1) {
+    let n = bu.length ? sum(o.bus, bu, 'bu_code')
+          : yr.length ? sum(o.years, yr, 'year') + (incY ? o.no_year : 0)
+                      : sum(o.types, mt, 'name') + (incT ? o.no_type : 0);
+    txt = `จะได้ <b>${n.toLocaleString()}</b> เครื่อง`;
+  } else {
+    txt = 'เลือกหลายเงื่อนไข — จำนวนจริงดูได้ในไฟล์ที่ดาวน์โหลด';
+  }
+  const parts = [];
+  if (bu.length) parts.push('BU: ' + bu.join(', '));
+  if (yr.length) parts.push('ปีหมดสัญญา: ' + yr.join(', ') + (incY ? ' + ไม่มีวันหมด' : ''));
+  if (mt.length) parts.push(mt.length + ' ประเภทเครื่อง' + (incT ? ' + ยังไม่ระบุ' : ''));
+  document.getElementById('rx-preview').innerHTML =
+    txt + (parts.length ? ` <span style="color:#94a3b8">· ${esc(parts.join(' · '))}</span>` : '');
+}
+
+function clearRentalExport() {
+  document.querySelectorAll('.rx-chk input:checked').forEach(i => {
+    i.checked = false;
+    i.closest('.rx-chk').classList.remove('on');
+  });
+  ['rx-inc-year', 'rx-inc-type'].forEach(id => document.getElementById(id).checked = false);
+  updateRentalPreview();
+}
+
+function exportRental(btn) {
+  const params = new URLSearchParams();
+  const bu = rentalPicked('bu'), yr = rentalPicked('year'), mt = rentalPicked('machine_type');
+  if (bu.length) params.set('bu', bu.join(','));
+  if (yr.length) params.set('year', yr.join(','));
+  if (mt.length) params.set('machine_type', mt.join(','));
+  if (yr.length && document.getElementById('rx-inc-year').checked) params.set('include_no_year', '1');
+  if (mt.length && document.getElementById('rx-inc-type').checked) params.set('include_no_type', '1');
+
+  if (btn) {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '⏳ กำลังสร้างไฟล์...';
+    btn.disabled = true;
+    setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 3500);
+  }
+  window.location = '/api/rental/export?' + params;
 }
 
 function scrollToAnomalyPanel(panelId) {
