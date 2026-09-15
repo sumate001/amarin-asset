@@ -772,3 +772,329 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .btn-sm:hover { background: #f8fafc; color: #334155; }
 
 @media (max-width: 900px) { .rx-grid { grid-template-columns: 1fr; } }
+
+/* ================================
+   Software ถือครอง
+   ================================ */
+
+/* --- badge / ปุ่มในตารางพนักงาน --- */
+.sw-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #f3e8ff; color: #7e22ce;
+  border-radius: 6px; font-size: .7rem; font-weight: 700;
+  padding: 3px 8px; cursor: pointer; white-space: nowrap;
+  transition: background .15s;
+}
+.sw-badge:hover { background: #e9d5ff; }
+
+.sw-add-btn {
+  background: #fff; color: #94a3b8;
+  border: 1px dashed #cbd5e1; border-radius: 6px;
+  font-size: .7rem; font-weight: 600; font-family: inherit;
+  padding: 3px 9px; cursor: pointer; white-space: nowrap;
+  transition: all .15s;
+}
+.sw-add-btn:hover { border-color: #a855f7; color: #7e22ce; background: #faf5ff; }
+
+/* --- แถบเพิ่ม/แก้ไขใน modal --- */
+.sw-add {
+  background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 10px;
+  padding: 12px; margin-bottom: 14px;
+}
+
+.sw-error {
+  display: none; margin-top: 8px; font-size: .75rem; color: #b91c1c; font-weight: 600;
+}
+
+/* --- รายการ software --- */
+.sw-count { font-size: .74rem; color: #94a3b8; font-weight: 600; margin-bottom: 6px; }
+.sw-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border: 1px solid #f1f5f9; border-radius: 9px;
+  background: #fff; margin-bottom: 6px;
+}
+.sw-item:hover { border-color: #e2e8f0; background: #fcfcfd; }
+.sw-item-main { flex: 1; min-width: 0; }
+.sw-item-name { font-size: .85rem; font-weight: 600; color: #1e293b; }
+.sw-item-note { font-size: .74rem; color: #64748b; margin-top: 2px; }
+.sw-item-date { font-size: .72rem; color: #cbd5e1; white-space: nowrap; }
+
+.sw-empty {
+  text-align: center; padding: 26px 16px; color: #94a3b8; font-size: .82rem;
+  border: 1px dashed #e2e8f0; border-radius: 10px;
+}
+
+
+/* --- dropdown เลือกจากคลัง --- */
+.sw-add select {
+  padding: 8px 11px; border: 1px solid #ddd6fe; border-radius: 7px;
+  font-size: .82rem; font-family: inherit; background: #fff; color: #1e293b;
+  width: 100%; cursor: pointer;
+}
+.sw-add select:focus { outline: none; border-color: #a855f7; box-shadow: 0 0 0 3px #f3e8ff; }
+.sw-add-foot {
+  margin-top: 9px; font-size: .73rem; color: #94a3b8;
+}
+.sw-add-foot a { color: #7e22ce; font-weight: 600; text-decoration: none; }
+.sw-add-foot a:hover { text-decoration: underline; }
+
+.sw-item-meta { font-size: .74rem; color: #64748b; margin-top: 2px; }
+.sw-off {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+  background: #fef3c7; color: #92400e; font-size: .65rem; font-weight: 700;
+}
+
+/* ================================
+   คลัง Software (master data)
+   ================================ */
+.swcat-form {
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+  padding: 14px; margin-bottom: 14px;
+}
+.swcat-form-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 10px;
+}
+.swcat-form-grid label {
+  display: block; font-size: .72rem; font-weight: 600; color: #64748b; margin-bottom: 4px;
+}
+.swcat-form-grid input, .swcat-form-grid select, .swcat-form-row input {
+  width: 100%; padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 7px;
+  font-size: .82rem; font-family: inherit; background: #fff; color: #1e293b;
+}
+.swcat-form-grid input:focus, .swcat-form-grid select:focus, .swcat-form-row input:focus {
+  outline: none; border-color: #a855f7; box-shadow: 0 0 0 3px #f3e8ff;
+}
+.swcat-form-row { display: flex; gap: 8px; align-items: center; }
+.swcat-form-row .btn { white-space: nowrap; }
+.swcat-active {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: .78rem; color: #475569; cursor: pointer;
+}
+.swcat-active input { accent-color: #7e22ce; margin: 0; }
+
+.swcat-toolbar {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 10px;
+}
+.swcat-toolbar input[type="text"] {
+  flex: 1; padding: 7px 11px; border: 1px solid #e2e8f0; border-radius: 7px;
+  font-size: .82rem; font-family: inherit;
+}
+.swcat-toolbar input[type="text"]:focus {
+  outline: none; border-color: #a855f7; box-shadow: 0 0 0 3px #f3e8ff;
+}
+.swcat-showall {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  font-size: .76rem; color: #64748b; cursor: pointer;
+}
+.swcat-showall input { accent-color: #7e22ce; margin: 0; }
+.swcat-count { font-size: .74rem; color: #94a3b8; white-space: nowrap; }
+
+.swcat-group { margin-bottom: 14px; }
+.swcat-group-head {
+  display: flex; align-items: center; gap: 8px;
+  font-size: .74rem; font-weight: 700; color: #7e22ce;
+  padding: 5px 2px; border-bottom: 1px solid #f3e8ff; margin-bottom: 5px;
+}
+.swcat-group-head span {
+  background: #f3e8ff; color: #7e22ce; border-radius: 10px;
+  padding: 1px 7px; font-size: .68rem;
+}
+.swcat-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 10px; border-radius: 8px; border: 1px solid transparent;
+}
+.swcat-row:hover { background: #fcfcfd; border-color: #f1f5f9; }
+.swcat-row.off { opacity: .55; }
+.swcat-main { flex: 1; min-width: 0; }
+.swcat-name { font-size: .84rem; font-weight: 600; color: #1e293b; }
+.swcat-meta { font-size: .73rem; color: #64748b; margin-top: 1px; }
+.swcat-holders {
+  font-size: .75rem; font-weight: 700; color: #7e22ce; white-space: nowrap;
+  min-width: 52px; text-align: right;
+}
+
+@media (max-width: 760px) {
+  .swcat-form-grid { grid-template-columns: 1fr 1fr; }
+  .swcat-form-row { flex-wrap: wrap; }
+  .swcat-toolbar { flex-wrap: wrap; }
+}
+
+/* --- แถวรายการแบบร่าง (รอยืนยัน) --- */
+.sw-item { transition: background .15s, border-color .15s; }
+.sw-item .sw-note-input {
+  width: 190px; min-width: 120px; padding: 6px 9px;
+  border: 1px solid #e2e8f0; border-radius: 6px;
+  font-size: .78rem; font-family: inherit; color: #1e293b; background: #fff;
+}
+.sw-item .sw-note-input:focus {
+  outline: none; border-color: #a855f7; box-shadow: 0 0 0 3px #f3e8ff;
+}
+.sw-item .sw-note-input:disabled { background: #f8fafc; color: #cbd5e1; }
+
+.sw-item.staged  { background: #f0fdf4; border-color: #bbf7d0; }
+.sw-item.edited  { background: #fffbeb; border-color: #fde68a; }
+.sw-item.removed { background: #fef2f2; border-color: #fecaca; }
+.sw-item.removed .sw-item-name { text-decoration: line-through; color: #94a3b8; }
+.sw-item.removed .sw-item-meta { color: #cbd5e1; }
+
+.sw-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 4px;
+  font-size: .65rem; font-weight: 700; vertical-align: middle;
+}
+.sw-tag.new  { background: #dcfce7; color: #15803d; }
+.sw-tag.edit { background: #fef3c7; color: #92400e; }
+.sw-tag.del  { background: #fee2e2; color: #b91c1c; }
+
+.icon-btn.undo { color: #0f766e; }
+
+/* --- แถบล่างของ modal: สรุปการเปลี่ยนแปลง + ยืนยัน --- */
+.sw-footer { justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+.sw-footer-btns { display: flex; gap: 8px; }
+.sw-change-summary { font-size: .78rem; color: #475569; }
+.sw-dirty { color: #b45309; font-weight: 700; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+@media (max-width: 640px) {
+  .sw-item { flex-wrap: wrap; }
+  .sw-item .sw-note-input { width: 100%; order: 3; }
+}
+
+/* ================================
+   Dashboard: บริหาร Software
+   ================================ */
+.sd-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 6px;
+}
+.sd-head-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sd-head-tools input[type="text"] {
+  padding: 6px 11px; border: 1px solid #e2e8f0; border-radius: 7px;
+  font-size: .8rem; font-family: inherit; min-width: 190px;
+}
+.sd-head-tools input[type="text"]:focus {
+  outline: none; border-color: #a855f7; box-shadow: 0 0 0 3px #f3e8ff;
+}
+.sd-head-tools select {
+  padding: 6px 10px; border: 1px solid #e2e8f0; border-radius: 7px;
+  font-size: .8rem; font-family: inherit; background: #fff; cursor: pointer;
+}
+
+.sd-table tbody tr.sd-row { cursor: pointer; transition: background .12s; }
+.sd-table tbody tr.sd-row:hover { background: #faf5ff; }
+.sd-caret { display: inline-block; width: 12px; color: #a855f7; font-size: .7rem; }
+
+.sd-warn {
+  display: inline-block; padding: 1px 7px; border-radius: 10px;
+  background: #fef3c7; color: #92400e; font-size: .72rem; font-weight: 700;
+}
+
+.sd-holders > td { background: #faf5ff; border-bottom: 1px solid #e9d5ff; }
+.sd-holders-box { padding: 10px 14px 12px 26px; }
+
+.sd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.sd-chip {
+  display: inline-block; padding: 3px 10px; border-radius: 12px;
+  background: #f1f5f9; color: #475569; font-size: .76rem; font-weight: 600;
+}
+.sd-chip.off { background: #fef3c7; color: #92400e; }
+
+@media (max-width: 900px) {
+  .sd-head-tools input[type="text"] { min-width: 120px; }
+}
+
+/* ---- แยกตามผู้ผลิต: BU → ฝ่าย → คน ---- */
+.sv-summary {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center;
+  font-size: .8rem; color: #475569; margin: 2px 0 10px;
+}
+.sv-summary b { color: #7e22ce; font-size: .95rem; font-variant-numeric: tabular-nums; }
+.sv-summary .sv-none {
+  font-size: .74rem; color: #92400e; background: #fffbeb;
+  border: 1px solid #fde68a; border-radius: 6px; padding: 2px 9px;
+}
+
+.sv-products { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.sv-prod {
+  padding: 3px 10px; border-radius: 12px; background: #f3e8ff; color: #6b21a8;
+  font-size: .75rem;
+}
+.sv-prod b { font-variant-numeric: tabular-nums; }
+
+.sv-bu { border: 1px solid #e9d5ff; border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+.sv-bu-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 12px; background: #faf5ff; cursor: pointer; user-select: none;
+}
+.sv-bu-head:hover { background: #f3e8ff; }
+.sv-caret { color: #a855f7; font-size: .7rem; width: 10px; }
+.sv-bu-num { font-size: .8rem; color: #475569; }
+.sv-bu-num b { color: #7e22ce; font-variant-numeric: tabular-nums; }
+.sv-bu-prods {
+  font-size: .7rem; color: #94a3b8; margin-left: auto; text-align: right;
+  max-width: 55%; line-height: 1.5;
+}
+
+.sv-dept { border-top: 1px solid #f3e8ff; }
+.sv-dept-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px 7px 26px; cursor: pointer; user-select: none; background: #fff;
+}
+.sv-dept-head:hover { background: #fcfaff; }
+.sv-dept-name { font-size: .82rem; font-weight: 600; color: #1e293b; }
+.sv-dept-num { font-size: .74rem; color: #94a3b8; margin-left: auto; }
+
+.sv-matrix-wrap { overflow-x: auto; padding: 0 12px 12px 26px; background: #fff; }
+.sv-matrix { border-collapse: collapse; font-size: .78rem; background: #fff; width: auto; min-width: 100%; }
+.sv-matrix th {
+  background: #f8fafc; padding: 6px 8px; border-bottom: 2px solid #e2e8f0;
+  font-size: .7rem; font-weight: 700; color: #475569; white-space: nowrap; text-align: center;
+}
+.sv-matrix th.sv-sticky, .sv-matrix td.sv-sticky {
+  position: sticky; left: 0; background: #fff; text-align: left; z-index: 1;
+  border-right: 1px solid #f1f5f9; white-space: nowrap;
+}
+.sv-matrix th.sv-sticky { background: #f8fafc; }
+.sv-matrix th.sv-rot { max-width: 92px; white-space: normal; line-height: 1.25; }
+.sv-matrix td { padding: 5px 8px; border-bottom: 1px solid #f8fafc; }
+.sv-matrix tbody tr:hover td { background: #faf5ff; }
+.sv-matrix tbody tr:hover td.sv-sticky { background: #f3e8ff; }
+.sv-matrix td.sv-sticky a { color: #1e293b; text-decoration: none; border-bottom: 1px dotted #cbd5e1; }
+.sv-matrix td.sv-sticky a:hover { color: #7e22ce; }
+.sv-code { font-family: monospace; font-size: .68rem; color: #cbd5e1; margin-left: 6px; }
+.sv-pos { color: #64748b; font-size: .74rem; max-width: 200px; }
+.sv-cell { text-align: center; font-variant-numeric: tabular-nums; }
+.sv-on  { color: #16a34a; font-size: .9rem; cursor: help; }
+.sv-off { color: #e2e8f0; }
+.sv-matrix tfoot td {
+  background: #f8fafc; border-top: 2px solid #e2e8f0;
+  font-weight: 700; color: #475569; font-size: .74rem;
+}
+.sv-matrix tfoot td.sv-sticky { background: #f8fafc; }
+
+/* ---- เกณฑ์ All Apps: เครื่องหมายถูกสีแดง ---- */
+.sv-cc { color: #dc2626; font-weight: 800; cursor: help; }
+.sv-cc-b { color: #dc2626; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sv-cc-sum {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px;
+  padding: 2px 10px; font-size: .78rem; color: #991b1b;
+}
+.sv-cc-sum b { color: #dc2626; }
+.sv-rule-note {
+  display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  font-size: .72rem; color: #991b1b; background: #fef2f2;
+  border: 1px dashed #fecaca; border-radius: 12px; padding: 3px 11px;
+}
+.sv-matrix th.sv-cc-th {
+  color: #991b1b; background: #fef2f2; border-left: 2px solid #fecaca; max-width: 104px;
+}
+.sv-matrix td:last-child.sv-cell { border-left: 1px solid #fee2e2; }
+
+/* ---- แถบแจ้งว่าซ่อนเครื่องที่ไม่ใช่ Active ---- */
+.ad-notice {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 9px 16px; background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+  font-size: .76rem; color: #64748b;
+}
+.ad-notice .btn-sm { flex-shrink: 0; }

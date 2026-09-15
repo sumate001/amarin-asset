@@ -32,8 +32,8 @@
 
 <!-- ======= EMPLOYEES TAB ======= -->
 <div id="tab-employees" class="tab-content active">
-  <!-- Toolbar -->
-  <div class="toolbar">
+  <!-- Toolbar: แถวบน = ค้นหา + ตัวกรองหลัก -->
+  <div class="toolbar toolbar-row1">
     <div class="toolbar-left">
       <div class="search-wrap">
         <svg class="search-icon" viewBox="0 0 20 20"><circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.8" fill="none"/><line x1="12" y1="12" x2="17" y2="17" stroke="currentColor" stroke-width="1.8"/></svg>
@@ -42,19 +42,13 @@
       </div>
       <select id="filter-bu"><option value="">ทุก BU</option></select>
       <select id="filter-dept"><option value="">ทุกแผนก</option></select>
+      <select id="filter-position"><option value="">ทุกตำแหน่ง</option></select>
       <select id="filter-status">
         <option value="">ทุกสถานะ</option>
         <option value="active">Active</option>
         <option value="inactive">Inactive</option>
       </select>
-      <label class="checkbox-filter">
-        <input type="checkbox" id="filter-has-asset" onchange="onHasAssetChange()">
-        <span>💻 มีทรัพย์สิน IT</span>
-      </label>
-      <label class="checkbox-filter">
-        <input type="checkbox" id="filter-no-asset" onchange="onNoAssetChange()">
-        <span>🚫 ไม่มีทรัพย์สิน IT</span>
-      </label>
+      <select id="filter-software"><option value="">Software ทั้งหมด</option></select>
     </div>
     <div class="toolbar-right">
       <button class="btn btn-secondary" onclick="exportExcel()">
@@ -66,6 +60,9 @@
         Import Excel
         <input type="file" id="import-file" accept=".xlsx" style="display:none" onchange="importExcel(this)">
       </label>
+      <button class="btn btn-secondary" onclick="openSwCatalog()" title="จัดการรายการ Software กลาง">
+        🧩 คลัง Software
+      </button>
       <button class="btn btn-secondary" onclick="openSyncModal()">
         <svg viewBox="0 0 20 20" width="14" height="14"><path d="M4 10a6 6 0 1 1 1.5 4" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><polyline points="1,10 4,13 7,10" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
         Sync จาก Intranet
@@ -73,6 +70,34 @@
       <button class="btn btn-primary" onclick="openModal()">
         <svg viewBox="0 0 20 20" width="14" height="14"><line x1="10" y1="4" x2="10" y2="16" stroke="currentColor" stroke-width="2"/><line x1="4" y1="10" x2="16" y2="10" stroke="currentColor" stroke-width="2"/></svg>
         เพิ่มพนักงาน
+      </button>
+    </div>
+  </div>
+
+  <!-- Toolbar: แถวล่าง = กรองพิเศษ + ล้างตัวกรอง -->
+  <div class="toolbar toolbar-row2">
+    <div class="toolbar-left" style="flex-wrap:wrap;gap:6px 14px">
+      <span style="font-size:.72rem;font-weight:600;color:#94a3b8;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;align-self:center">กรองพิเศษ</span>
+      <span style="width:1px;height:20px;background:#e2e8f0;align-self:center"></span>
+      <label class="checkbox-filter">
+        <input type="checkbox" id="filter-has-asset" onchange="onHasAssetChange()">
+        <span>💻 มีเครื่องใช้งาน (Active)</span>
+      </label>
+      <label class="checkbox-filter">
+        <input type="checkbox" id="filter-no-asset" onchange="onNoAssetChange()">
+        <span>🚫 ไม่มีเครื่อง Active</span>
+      </label>
+      <label class="checkbox-filter">
+        <input type="checkbox" id="filter-has-sw" onchange="onHasSwChange()">
+        <span>🧩 มี Software</span>
+      </label>
+      <label class="checkbox-filter">
+        <input type="checkbox" id="filter-no-sw" onchange="onNoSwChange()">
+        <span>🚫 ยังไม่บันทึก Software</span>
+      </label>
+      <button id="emp-reset-btn" onclick="resetEmpFilters()" class="btn-reset-filter" style="display:none">
+        <svg viewBox="0 0 20 20" width="12" height="12"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        ล้าง Filter ทั้งหมด
       </button>
     </div>
   </div>
@@ -95,6 +120,7 @@
           <th>Email</th>
           <th>สถานะ</th>
           <th style="width:50px" title="IT Assets">💻</th>
+          <th style="width:170px" title="Software ที่ถือครอง">Software</th>
           <th style="width:100px">จัดการ</th>
         </tr>
       </thead>
@@ -507,6 +533,111 @@
   </div>
 </div>
 
+<!-- ======= SOFTWARE MODAL ======= -->
+<div id="software-overlay" class="modal-overlay" onclick="closeSoftwareOnOverlay(event)">
+  <div class="modal" style="width:600px;max-width:96vw">
+    <div class="modal-header">
+      <div>
+        <h2>Software ที่ถือครอง</h2>
+        <p id="sw-subtitle" style="font-size:.78rem;color:#64748b;margin-top:2px"></p>
+      </div>
+      <button class="modal-close" onclick="closeSoftware()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="sw-add">
+        <select id="sw-select" onchange="onSwSelectChange()"></select>
+        <div id="sw-error" class="sw-error"></div>
+        <div class="sw-add-foot">
+          เลือกแล้วรายการจะเข้าด้านล่างทันที กรอกหมายเหตุได้ แล้วกด <b>ยืนยัน</b> ครั้งเดียวตอนจบ —
+          <a href="#" onclick="openSwCatalog();return false">จัดการคลัง Software</a>
+        </div>
+      </div>
+      <div id="sw-list"></div>
+    </div>
+    <div class="modal-footer sw-footer">
+      <div id="sw-change-summary" class="sw-change-summary"></div>
+      <div class="sw-footer-btns">
+        <button class="btn btn-secondary" onclick="revertSwChanges()" id="sw-revert-btn"
+                style="display:none">ย้อนกลับ</button>
+        <button class="btn btn-secondary" onclick="closeSoftware()">ปิด</button>
+        <button class="btn btn-primary" onclick="confirmSoftware()" id="sw-confirm-btn" disabled>
+          ยืนยัน
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======= SOFTWARE CATALOG (MASTER DATA) MODAL ======= -->
+<div id="swcat-overlay" class="modal-overlay" onclick="closeSwCatalogOnOverlay(event)">
+  <div class="modal" style="width:860px;max-width:96vw">
+    <div class="modal-header">
+      <div>
+        <h2>คลัง Software</h2>
+        <p style="font-size:.78rem;color:#64748b;margin-top:2px">
+          รายการกลางที่ใช้เป็นตัวเลือกให้ทุกคน — แก้ชื่อที่นี่แล้วชื่อที่พนักงานถือครองจะเปลี่ยนตาม
+        </p>
+      </div>
+      <button class="modal-close" onclick="closeSwCatalog()">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- ฟอร์มเพิ่ม/แก้ไข -->
+      <div class="swcat-form">
+        <div class="swcat-form-grid">
+          <div>
+            <label>ชื่อ Software <span style="color:#dc2626">*</span></label>
+            <input id="swc-name" type="text" placeholder="เช่น Adobe Photoshop">
+          </div>
+          <div>
+            <label>หมวด</label>
+            <input id="swc-category" type="text" list="swc-cat-list" placeholder="เช่น กราฟิก/ออกแบบ">
+            <datalist id="swc-cat-list"></datalist>
+          </div>
+          <div>
+            <label>ผู้ผลิต</label>
+            <input id="swc-vendor" type="text" placeholder="เช่น Adobe">
+          </div>
+          <div>
+            <label>ประเภทลิขสิทธิ์</label>
+            <select id="swc-license">
+              <option value="">— ไม่ระบุ —</option>
+              <option value="subscription">รายปี / Subscription</option>
+              <option value="perpetual">ซื้อขาด / Perpetual</option>
+              <option value="oem">ติดมากับเครื่อง / OEM</option>
+              <option value="free">ฟรี / Freeware</option>
+            </select>
+          </div>
+        </div>
+        <div class="swcat-form-row">
+          <input id="swc-note" type="text" placeholder="หมายเหตุ (ไม่บังคับ)" style="flex:1">
+          <label class="swcat-active" id="swc-active-wrap" style="display:none">
+            <input type="checkbox" id="swc-active" checked><span>เปิดใช้งาน</span>
+          </label>
+          <button class="btn btn-primary" id="swc-save-btn" onclick="saveSwCatalog()">เพิ่มเข้าคลัง</button>
+          <button class="btn btn-secondary" id="swc-cancel-btn" onclick="cancelSwCatalogEdit()"
+                  style="display:none">ยกเลิก</button>
+        </div>
+        <div id="swc-error" class="sw-error"></div>
+      </div>
+
+      <!-- แถบค้นหา -->
+      <div class="swcat-toolbar">
+        <input id="swc-search" type="text" placeholder="ค้นหาในคลัง..." oninput="renderSwCatalog()">
+        <label class="swcat-showall">
+          <input type="checkbox" id="swc-show-inactive" onchange="loadSwCatalog(true)">
+          <span>แสดงรายการที่ปิดใช้งาน</span>
+        </label>
+        <div class="swcat-count" id="swc-count"></div>
+      </div>
+
+      <div id="swcat-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeSwCatalog()">ปิด</button>
+    </div>
+  </div>
+</div>
+
 <!-- ======= DASHBOARD TAB ======= -->
 <div id="tab-dashboard" class="tab-content" style="display:none">
 
@@ -515,6 +646,7 @@
     <button class="dash-subtab active" data-subtab="emp"      onclick="switchDashTab('emp')">👥 เรื่องพนักงาน</button>
     <button class="dash-subtab"        data-subtab="rental"   onclick="switchDashTab('rental')">📋 บริหารสัญญาเช่า</button>
     <button class="dash-subtab"        data-subtab="machine"  onclick="switchDashTab('machine')">⚠️ บริหารเครื่อง</button>
+    <button class="dash-subtab"        data-subtab="software" onclick="switchDashTab('software')">🧩 บริหาร Software</button>
   </div>
 
   <!-- ========== Tab 1: พนักงาน ========== -->
@@ -787,6 +919,92 @@
     </div>
 
   </div><!-- end dash-pane-machine -->
+
+  <!-- ========== Tab 4: บริหาร Software ========== -->
+  <div id="dash-pane-software" class="dash-pane" style="display:none">
+
+    <!-- KPI -->
+    <div class="dash-grid" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat-card">
+        <div class="stat-label">🧩 License ที่บันทึกไว้</div>
+        <div class="stat-value" id="sd-licenses">—</div>
+        <div class="stat-sub" id="sd-licenses-sub" style="font-size:.68rem;color:#94a3b8;margin-top:4px"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">👥 พนักงานที่มีข้อมูลแล้ว</div>
+        <div class="stat-value" id="sd-emps">—</div>
+        <div class="stat-sub" id="sd-emps-sub" style="font-size:.68rem;color:#94a3b8;margin-top:4px"></div>
+      </div>
+      <div class="stat-card clickable" onclick="scrollToAnomalyPanel('sd-panel-unused')">
+        <div class="stat-label">📦 รายการในคลังที่มีผู้ถือครอง</div>
+        <div class="stat-value" id="sd-catalog">—</div>
+        <div class="stat-sub" id="sd-catalog-sub" style="font-size:.68rem;color:#94a3b8;margin-top:4px"></div>
+      </div>
+      <div class="stat-card clickable" onclick="scrollToAnomalyPanel('sd-panel-inactive')">
+        <div class="stat-label">⚠️ License ค้างที่คนที่ไม่ Active</div>
+        <div class="stat-value" style="color:#b45309" id="sd-inactive">—</div>
+        <div class="stat-sub" style="font-size:.68rem;color:#92400e;margin-top:4px">ควรเรียกคืน / ย้ายให้คนอื่น ▾</div>
+      </div>
+    </div>
+
+    <!-- ตารางหลัก: Software × BU -->
+    <div class="dash-panel" style="margin-bottom:16px">
+      <div class="sd-head">
+        <h3 style="margin:0">Software ที่ถือครอง แยกตาม BU</h3>
+        <div class="sd-head-tools">
+          <input id="sd-search" type="text" placeholder="ค้นหา Software / หมวด..." oninput="renderSwDashTable()">
+          <select id="sd-bu" onchange="renderSwDashTable()"><option value="">ทุก BU</option></select>
+          <button class="btn btn-secondary btn-sm" onclick="exportSoftware(this)">⬇ Export Excel</button>
+          <button class="btn btn-secondary btn-sm" onclick="loadSoftwareDashboard(true)">↻ Refresh</button>
+        </div>
+      </div>
+      <p style="font-size:.75rem;color:#94a3b8;margin:0 0 10px">คลิกที่แถวเพื่อดูรายชื่อผู้ถือครอง</p>
+      <div id="sd-table-wrap" style="overflow-x:auto"></div>
+    </div>
+
+    <!-- แยกตามผู้ผลิต: BU → ฝ่าย → คน -->
+    <div class="dash-panel" style="margin-bottom:16px">
+      <div class="sd-head">
+        <h3 style="margin:0">🅰 ไล่ดูรายคน — <span id="sv-title">Adobe</span></h3>
+        <div class="sd-head-tools">
+          <select id="sv-vendor" onchange="loadSwVendor()"></select>
+          <input id="sv-search" type="text" placeholder="ค้นหาชื่อคน / ฝ่าย / ตำแหน่ง..." oninput="renderSwVendor()">
+          <button class="btn btn-secondary btn-sm" onclick="expandSwVendor(true)">กางทั้งหมด</button>
+          <button class="btn btn-secondary btn-sm" onclick="expandSwVendor(false)">พับทั้งหมด</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportSwVendor(this)">⬇ Export Excel</button>
+        </div>
+      </div>
+      <div id="sv-summary" class="sv-summary"></div>
+      <div id="sv-products" class="sv-products"></div>
+      <div id="sv-tree"></div>
+    </div>
+
+    <!-- ความครบของข้อมูลแยก BU -->
+    <div class="dash-row" style="margin-bottom:16px">
+      <div class="dash-panel">
+        <h3>ความครบของข้อมูลแยก BU</h3>
+        <p style="font-size:.75rem;color:#94a3b8;margin:-6px 0 10px">
+          สัดส่วนพนักงาน Active ที่บันทึก Software แล้ว — BU ที่ยังไม่เริ่มจะเห็นชัดตรงนี้</p>
+        <div id="sd-bu-bars"></div>
+      </div>
+      <div class="dash-panel" id="sd-panel-unused">
+        <h3>📦 ในคลังแต่ยังไม่มีใครถือครอง <span id="sd-unused-count" style="background:#f1f5f9;color:#475569;font-size:.78rem;padding:3px 10px;border-radius:12px;font-weight:600"></span></h3>
+        <p style="font-size:.75rem;color:#94a3b8;margin:-6px 0 10px">
+          ยังไม่มีการบันทึกให้ใครเลย — อาจเลิกใช้แล้ว หรือยังไม่ได้ลงข้อมูล</p>
+        <div id="sd-unused-list"></div>
+      </div>
+    </div>
+
+    <!-- License ค้างที่คนที่ไม่ Active -->
+    <div class="dash-panel anomaly-panel" id="sd-panel-inactive">
+      <h3>⚠️ License ที่ยังผูกกับพนักงานที่ไม่ Active <span id="sd-inactive-count" style="background:#fef3c7;color:#92400e;font-size:.78rem;padding:3px 10px;border-radius:12px;font-weight:600"></span></h3>
+      <p style="font-size:.75rem;color:#94a3b8;margin:-6px 0 10px">
+        พนักงานสถานะ Inactive แต่ยังถือ license อยู่ — ตรวจว่าเรียกคืนหรือย้ายให้คนอื่นแล้วหรือยัง ·
+        คลิกชื่อเพื่อเปิดหน้าจัดการ Software ของคนนั้น</p>
+      <div id="sd-inactive-list" style="overflow-x:auto"></div>
+    </div>
+
+  </div><!-- end dash-pane-software -->
 
 </div>
 

@@ -46,6 +46,82 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+# ชุดตั้งต้นของคลัง Software — ใส่ให้ครั้งเดียวตอนตารางยังว่าง
+# ผู้ดูแลแก้/ลบ/เพิ่มได้เองจากหน้า "คลัง Software" ระบบจะไม่เขียนทับอีก
+SOFTWARE_SEED = [
+    # (ชื่อ, หมวด, ผู้ผลิต, ประเภทลิขสิทธิ์)
+    ('Microsoft 365',                  'สำนักงาน',        'Microsoft', 'subscription'),
+    ('Microsoft Office 2021',          'สำนักงาน',        'Microsoft', 'perpetual'),
+    ('Microsoft Visio',                'สำนักงาน',        'Microsoft', 'perpetual'),
+    ('Microsoft Project',              'สำนักงาน',        'Microsoft', 'perpetual'),
+    ('Google Workspace',               'สำนักงาน',        'Google',    'subscription'),
+    ('Zoom',                           'สำนักงาน',        'Zoom',      'subscription'),
+
+    ('Adobe Creative Cloud (All Apps)','กราฟิก/ออกแบบ',   'Adobe',     'subscription'),
+    ('Adobe Photoshop',                'กราฟิก/ออกแบบ',   'Adobe',     'subscription'),
+    ('Adobe Illustrator',              'กราฟิก/ออกแบบ',   'Adobe',     'subscription'),
+    ('Adobe InDesign',                 'กราฟิก/ออกแบบ',   'Adobe',     'subscription'),
+    ('Adobe Acrobat Pro',              'กราฟิก/ออกแบบ',   'Adobe',     'subscription'),
+    ('Adobe Lightroom',                'กราฟิก/ออกแบบ',   'Adobe',     'subscription'),
+    ('CorelDRAW',                      'กราฟิก/ออกแบบ',   'Corel',     'perpetual'),
+    ('Figma',                          'กราฟิก/ออกแบบ',   'Figma',     'subscription'),
+    ('Canva Pro',                      'กราฟิก/ออกแบบ',   'Canva',     'subscription'),
+
+    ('Adobe Premiere Pro',             'ตัดต่อวิดีโอ/เสียง','Adobe',    'subscription'),
+    ('Adobe After Effects',            'ตัดต่อวิดีโอ/เสียง','Adobe',    'subscription'),
+    ('Adobe Audition',                 'ตัดต่อวิดีโอ/เสียง','Adobe',    'subscription'),
+    ('Adobe Media Encoder',            'ตัดต่อวิดีโอ/เสียง','Adobe',    'subscription'),
+    ('DaVinci Resolve Studio',         'ตัดต่อวิดีโอ/เสียง','Blackmagic','perpetual'),
+    ('Final Cut Pro',                  'ตัดต่อวิดีโอ/เสียง','Apple',    'perpetual'),
+    ('Avid Media Composer',            'ตัดต่อวิดีโอ/เสียง','Avid',     'subscription'),
+
+    ('Windows 11 Pro',                 'ระบบปฏิบัติการ',  'Microsoft', 'oem'),
+    ('Windows 10 Pro',                 'ระบบปฏิบัติการ',  'Microsoft', 'oem'),
+    ('Windows Server CAL',             'ระบบปฏิบัติการ',  'Microsoft', 'perpetual'),
+
+    ('ESET Endpoint Security',         'ความปลอดภัย',     'ESET',      'subscription'),
+    ('Trend Micro Apex One',           'ความปลอดภัย',     'Trend Micro','subscription'),
+
+    ('AutoCAD',                        'งานเฉพาะทาง',     'Autodesk',  'subscription'),
+    ('SketchUp Pro',                   'งานเฉพาะทาง',     'Trimble',   'subscription'),
+    ('Enfocus PitStop Pro',            'งานเฉพาะทาง',     'Enfocus',   'perpetual'),
+
+    ('TeamViewer',                     'เครื่องมือทั่วไป', 'TeamViewer','subscription'),
+    ('AnyDesk',                        'เครื่องมือทั่วไป', 'AnyDesk',   'subscription'),
+    ('WinRAR',                         'เครื่องมือทั่วไป', 'RARLAB',    'perpetual'),
+]
+
+
+def _seed_software_catalog(conn):
+    """ใส่ชุดตั้งต้นเฉพาะตอน catalog ว่างสนิท และดึงชื่อที่เคยกรอกอิสระเข้าคลัง"""
+    if conn.execute('SELECT COUNT(*) FROM software_catalog').fetchone()[0] == 0:
+        conn.executemany(
+            '''INSERT INTO software_catalog (name, category, vendor, license_type)
+               VALUES (?,?,?,?)''', SOFTWARE_SEED)
+        conn.commit()
+
+    # ชื่อที่ถูกกรอกไว้ก่อนมี catalog → เพิ่มเข้าคลังแล้วผูก id ให้
+    orphans = conn.execute(
+        '''SELECT DISTINCT software FROM software_assignments
+           WHERE software_id IS NULL AND software <> "" ''').fetchall()
+    for o in orphans:
+        name = o['software']
+        row = conn.execute(
+            'SELECT id FROM software_catalog WHERE name=? COLLATE NOCASE', (name,)).fetchone()
+        if not row:
+            cur = conn.execute(
+                'INSERT INTO software_catalog (name, category) VALUES (?, ?)',
+                (name, 'ยังไม่จัดหมวด'))
+            sid = cur.lastrowid
+        else:
+            sid = row['id']
+        conn.execute(
+            'UPDATE software_assignments SET software_id=? WHERE software=? AND software_id IS NULL',
+            (sid, name))
+    if orphans:
+        conn.commit()
+
+
 def init_db():
     conn = get_db()
     conn.execute('''
@@ -96,6 +172,32 @@ def init_db():
         )
     ''')
     conn.execute('''
+        CREATE TABLE IF NOT EXISTS software_catalog (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            name         TEXT NOT NULL UNIQUE,
+            category     TEXT,
+            vendor       TEXT,
+            license_type TEXT,
+            note         TEXT,
+            is_active    INTEGER DEFAULT 1,
+            created_at   TEXT DEFAULT (datetime('now','localtime')),
+            updated_at   TEXT DEFAULT (datetime('now','localtime'))
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS software_assignments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id INTEGER NOT NULL,
+            software    TEXT NOT NULL,
+            note        TEXT,
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        )
+    ''')
+    # migration: ผูก assignment เข้ากับ catalog (เดิมเก็บเป็นข้อความอิสระ)
+    sw_cols = [r[1] for r in conn.execute("PRAGMA table_info(software_assignments)").fetchall()]
+    if 'software_id' not in sw_cols:
+        conn.execute("ALTER TABLE software_assignments ADD COLUMN software_id INTEGER")
+    conn.execute('''
         CREATE TABLE IF NOT EXISTS machine_specs (
             machine_type TEXT NOT NULL,
             bu_code      TEXT NOT NULL,
@@ -108,6 +210,9 @@ def init_db():
     cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
     if 'emp_code' not in cols:
         conn.execute("ALTER TABLE employees ADD COLUMN emp_code TEXT")
+    conn.execute('''CREATE INDEX IF NOT EXISTS idx_sw_emp
+                    ON software_assignments (employee_id)''')
+    _seed_software_catalog(conn)
     # migration: asset_assignments — is_manual แยก manual transfer ออกจาก eDevice sync
     aa_cols = [r[1] for r in conn.execute("PRAGMA table_info(asset_assignments)").fetchall()]
     if 'is_manual' not in aa_cols:
@@ -151,7 +256,9 @@ def list_employees():
     email     = request.args.get('email', '').strip()
     bu        = request.args.get('bu', '')
     dept      = request.args.get('dept', '')
+    position  = request.args.get('position', '').strip()
     status    = request.args.get('status', '')
+    software  = request.args.get('software', '').strip()   # catalog id
     page      = max(1, int(request.args.get('page', 1)))
     per_page  = int(request.args.get('per_page', 50))
 
@@ -167,8 +274,16 @@ def list_employees():
         where.append("bu_code = ?"); params.append(bu)
     if dept:
         where.append("department = ?"); params.append(dept)
+    if position:
+        # ตรงตัว — ผู้ใช้เลือกจาก dropdown ยอดที่ได้ต้องตรงกับตัวเลขข้างตัวเลือก
+        # (อยากค้นแบบคร่าว ๆ ใช้ช่องค้นหา ซึ่ง LIKE ตำแหน่งอยู่แล้ว)
+        where.append("position = ?"); params.append(position)
     if status:
         where.append("status = ?"); params.append(status)
+    if software:
+        where.append("""id IN (SELECT employee_id FROM software_assignments
+                               WHERE software_id = ?)""")
+        params.append(software)
 
     sql_where = ('WHERE ' + ' AND '.join(where)) if where else ''
 
@@ -273,23 +388,49 @@ def update_employee(eid):
 def delete_employee(eid):
     conn = get_db()
     conn.execute('DELETE FROM employees WHERE id = ?', (eid,))
+    conn.execute('DELETE FROM software_assignments WHERE employee_id = ?', (eid,))
     conn.commit()
     conn.close()
     return jsonify({'ok': True})
 
 @app.route('/api/filters', methods=['GET'])
 def get_filters():
-    bu = request.args.get('bu', '')
+    """ตัวเลือกของ dropdown — แผนก/ตำแหน่ง ไล่ตาม BU และแผนกที่เลือกไว้
+    (ตำแหน่งมี 600+ ค่า ถ้าไม่ไล่ตามจะเลือกไม่ไหว)"""
+    bu   = request.args.get('bu', '')
+    dept = request.args.get('dept', '')
     conn = get_db()
-    bus   = conn.execute('SELECT DISTINCT bu_code, bu FROM employees WHERE bu_code != "" ORDER BY bu_code').fetchall()
+    bus = conn.execute(
+        'SELECT DISTINCT bu_code, bu FROM employees WHERE bu_code != "" ORDER BY bu_code'
+    ).fetchall()
+
+    dept_where, dept_params = ['department != ""'], []
     if bu:
-        depts = conn.execute('SELECT DISTINCT department FROM employees WHERE department != "" AND bu_code = ? ORDER BY department', (bu,)).fetchall()
-    else:
-        depts = conn.execute('SELECT DISTINCT department FROM employees WHERE department != "" ORDER BY department').fetchall()
+        dept_where.append('bu_code = ?'); dept_params.append(bu)
+    depts = conn.execute(
+        f'SELECT DISTINCT department FROM employees WHERE {" AND ".join(dept_where)} '
+        f'ORDER BY department', dept_params).fetchall()
+
+    pos_where, pos_params = ['position != ""'], []
+    if bu:
+        pos_where.append('bu_code = ?');    pos_params.append(bu)
+    if dept:
+        pos_where.append('department = ?'); pos_params.append(dept)
+    positions = conn.execute(
+        f'SELECT position, COUNT(*) c FROM employees WHERE {" AND ".join(pos_where)} '
+        f'GROUP BY position ORDER BY position COLLATE NOCASE', pos_params).fetchall()
+
+    softwares = conn.execute(
+        '''SELECT c.id, c.name, COUNT(a.id) c2 FROM software_catalog c
+           JOIN software_assignments a ON a.software_id = c.id
+           GROUP BY c.id, c.name ORDER BY c.name COLLATE NOCASE'''
+    ).fetchall()
     conn.close()
     return jsonify({
-        'bus':   [dict(r) for r in bus],
-        'depts': [r['department'] for r in depts]
+        'bus':       [dict(r) for r in bus],
+        'depts':     [r['department'] for r in depts],
+        'positions': [{'name': r['position'], 'count': r['c']} for r in positions],
+        'softwares': [{'id': r['id'], 'name': r['name'], 'count': r['c2']} for r in softwares],
     })
 
 # ---------- คุณสมบัติเครื่องคอมพิวเตอร์ (spec ต่อ ประเภทเครื่อง × BU) ----------
@@ -1039,13 +1180,28 @@ def list_assets():
     })
 
 
+def _asset_active(a):
+    """เครื่องที่ถือใช้งานอยู่จริงตอนนี้ = eDevice ระบุสถานะ active
+    (expire / spare / return / error ไม่ถือว่าเป็นเครื่องที่ใช้อยู่)
+    กฎนี้เป็นตัวตัดสินทั้งป้าย 💻 ในตารางพนักงานและรายการในหน้ารายละเอียด
+    ให้ตัวเลขตรงกันเสมอ"""
+    return (a.get('edevice_status') or '').strip().lower() == 'active'
+
+
 @app.route('/api/assets/employee-map', methods=['GET'])
 def asset_employee_map():
-    """Return {employee_id: count} for employees who have assets."""
+    """Return {employee_id: count} for employees who have assets.
+
+    ?status=active → นับเฉพาะเครื่องที่ eDevice ระบุ Active (ค่าที่หน้าเว็บใช้)
+    ไม่ส่ง = นับทุกเครื่องที่ยังไม่คืน
+    """
+    active_only = request.args.get('status') == 'active'
     all_assets = fetch_assets_raw()
     count_map = {}
     for a in all_assets:
         if a['contract_status'] == 'returned':
+            continue
+        if active_only and not _asset_active(a):
             continue
         eid = a.get('employee_id')
         if eid:
@@ -1054,7 +1210,13 @@ def asset_employee_map():
 
 @app.route('/api/employees/<int:eid>/assets', methods=['GET'])
 def employee_assets(eid):
-    """Return all assets currently assigned to this employee."""
+    """Return all assets currently assigned to this employee.
+
+    ทุกเครื่องจะติดธง is_active_now มาให้ (ใช้กฎเดียวกับป้าย 💻)
+    ?status=active → ส่งเฉพาะเครื่อง Active
+    ค่าปกติส่งทุกเครื่องที่ยังไม่คืน เพราะหน้าโยกย้ายทรัพย์สินตอนพนักงานลาออก
+    ต้องเห็นครบทุกเครื่อง ไม่ใช่แค่ที่ Active
+    """
     conn = get_db()
     emp = conn.execute('SELECT name FROM employees WHERE id=?', (eid,)).fetchone()
     db_assets = conn.execute(
@@ -1092,7 +1254,301 @@ def employee_assets(eid):
             if sheet_name == emp_name and key not in seen:
                 matched.append(a); seen.add(key)
 
-    return jsonify(matched)
+    # ติดธงไว้ให้หน้าเว็บกรอง/นับ โดยไม่ต้องรู้กฎเอง (copy ก่อน กัน cache เพี้ยน)
+    out = [dict(a, is_active_now=_asset_active(a)) for a in matched]
+    if request.args.get('status') == 'active':
+        out = [a for a in out if a['is_active_now']]
+    return jsonify(out)
+
+
+# ---------- Software ถือครอง ----------
+
+@app.route('/api/software/employee-map', methods=['GET'])
+def software_employee_map():
+    """{employee_id: จำนวน software} สำหรับแสดงคอลัมน์ในตารางพนักงาน"""
+    conn = get_db()
+    rows = conn.execute(
+        'SELECT employee_id, COUNT(*) c FROM software_assignments GROUP BY employee_id'
+    ).fetchall()
+    conn.close()
+    return jsonify({str(r['employee_id']): r['c'] for r in rows})
+
+
+# ---------- คลัง Software (master data) ----------
+
+@app.route('/api/software/catalog', methods=['GET'])
+def software_catalog_list():
+    """รายการใน catalog พร้อมยอดผู้ถือครองแต่ละตัว
+
+    ?all=1 → รวมรายการที่ปิดใช้งานแล้ว (ค่าปกติแสดงเฉพาะที่ยังใช้อยู่)
+    """
+    show_all = request.args.get('all') == '1'
+    conn = get_db()
+    rows = conn.execute(
+        f'''SELECT c.*, (SELECT COUNT(*) FROM software_assignments a
+                         WHERE a.software_id = c.id) AS holders
+            FROM software_catalog c
+            {'' if show_all else 'WHERE c.is_active = 1'}
+            ORDER BY c.category COLLATE NOCASE, c.name COLLATE NOCASE'''
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/software/catalog', methods=['POST'])
+def software_catalog_add():
+    d    = request.json or {}
+    name = (d.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'ต้องระบุชื่อ Software'}), 400
+
+    conn = get_db()
+    if conn.execute('SELECT id FROM software_catalog WHERE name=? COLLATE NOCASE',
+                    (name,)).fetchone():
+        conn.close()
+        return jsonify({'error': f'"{name}" มีอยู่ในคลังแล้ว'}), 409
+    cur = conn.execute(
+        '''INSERT INTO software_catalog (name, category, vendor, license_type, note)
+           VALUES (?,?,?,?,?)''',
+        (name, (d.get('category') or '').strip(), (d.get('vendor') or '').strip(),
+         (d.get('license_type') or '').strip(), (d.get('note') or '').strip()))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id, 'name': name})
+
+
+@app.route('/api/software/catalog/<int:cid>', methods=['PUT'])
+def software_catalog_update(cid):
+    d    = request.json or {}
+    name = (d.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'ต้องระบุชื่อ Software'}), 400
+
+    conn = get_db()
+    if conn.execute('SELECT id FROM software_catalog WHERE name=? COLLATE NOCASE AND id<>?',
+                    (name, cid)).fetchone():
+        conn.close()
+        return jsonify({'error': f'"{name}" มีอยู่ในคลังแล้ว'}), 409
+
+    cur = conn.execute(
+        '''UPDATE software_catalog
+           SET name=?, category=?, vendor=?, license_type=?, note=?, is_active=?,
+               updated_at=datetime('now','localtime')
+           WHERE id=?''',
+        (name, (d.get('category') or '').strip(), (d.get('vendor') or '').strip(),
+         (d.get('license_type') or '').strip(), (d.get('note') or '').strip(),
+         1 if d.get('is_active', 1) else 0, cid))
+    if not cur.rowcount:
+        conn.close()
+        return jsonify({'error': 'ไม่พบรายการในคลัง'}), 404
+    # ชื่อที่บันทึกไว้กับพนักงานเป็นสำเนา — เปลี่ยนชื่อในคลังต้องตามไปแก้ด้วย
+    conn.execute('UPDATE software_assignments SET software=? WHERE software_id=?', (name, cid))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/software/catalog/<int:cid>', methods=['DELETE'])
+def software_catalog_delete(cid):
+    """ลบรายการออกจากคลัง
+
+    ปกติลบได้เฉพาะที่ยังไม่มีใครถือครอง (ที่มีคนถือให้ปิดใช้งานแทน)
+    ?with_assignments=1 → ลบ license ของทุกคนที่ถือตัวนี้ออกด้วย
+    ใช้ตอนเลิกใช้โปรแกรมนั้นจริง ๆ กู้คืนไม่ได้ ฝั่ง UI จึงบังคับพิมพ์ยืนยันจำนวนก่อน
+    """
+    force = request.args.get('with_assignments') == '1'
+    conn  = get_db()
+    row   = conn.execute('SELECT name FROM software_catalog WHERE id=?', (cid,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'ไม่พบรายการในคลัง'}), 404
+
+    holders = conn.execute(
+        'SELECT COUNT(*) c FROM software_assignments WHERE software_id=?', (cid,)
+    ).fetchone()['c']
+    if holders and not force:
+        conn.close()
+        return jsonify({
+            'error': f'ลบไม่ได้ — มีพนักงาน {holders} คนถือครองอยู่ '
+                     f'(ถ้าเลิกใช้แล้วให้เลือก "ปิดใช้งาน" แทน)',
+            'holders': holders,
+        }), 409
+
+    removed = 0
+    if force and holders:
+        removed = conn.execute(
+            'DELETE FROM software_assignments WHERE software_id=?', (cid,)).rowcount
+    conn.execute('DELETE FROM software_catalog WHERE id=?', (cid,))
+    conn.commit()
+    conn.close()
+    app.logger.warning('ลบ software จากคลัง: "%s" (id=%s) พร้อม license %d ใบ',
+                       row['name'], cid, removed)
+    return jsonify({'ok': True, 'name': row['name'], 'removed_assignments': removed})
+
+
+# ---------- Software ที่พนักงานถือครอง ----------
+
+@app.route('/api/employees/<int:eid>/software', methods=['GET'])
+def list_employee_software(eid):
+    conn = get_db()
+    rows = conn.execute(
+        '''SELECT a.id, a.software, a.software_id, a.note, a.created_at,
+                  c.category, c.vendor, c.license_type, c.is_active
+           FROM software_assignments a
+           LEFT JOIN software_catalog c ON c.id = a.software_id
+           WHERE a.employee_id=? ORDER BY a.software COLLATE NOCASE''', (eid,)
+    ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+def _resolve_catalog(conn, d):
+    """หา (id, ชื่อ) จาก catalog โดยรับได้ทั้ง software_id และชื่อ
+    คืน (None, ข้อความ error) ถ้าไม่พบ — บันทึกได้เฉพาะของที่มีในคลัง"""
+    cid  = d.get('software_id')
+    name = (d.get('software') or '').strip()
+    row  = None
+    if cid:
+        row = conn.execute('SELECT id, name FROM software_catalog WHERE id=?', (cid,)).fetchone()
+        if not row:
+            return None, 'ไม่พบ Software นี้ในคลัง'
+    elif name:
+        row = conn.execute('SELECT id, name FROM software_catalog WHERE name=? COLLATE NOCASE',
+                           (name,)).fetchone()
+        if not row:
+            return None, f'"{name}" ยังไม่มีในคลัง — เพิ่มเข้าคลังก่อนจึงจะบันทึกได้'
+    else:
+        return None, 'ต้องเลือก Software จากคลัง'
+    return row, None
+
+
+@app.route('/api/employees/<int:eid>/software', methods=['POST'])
+def add_employee_software(eid):
+    d    = request.json or {}
+    note = (d.get('note') or '').strip()
+
+    conn = get_db()
+    if not conn.execute('SELECT 1 FROM employees WHERE id=?', (eid,)).fetchone():
+        conn.close()
+        return jsonify({'error': 'ไม่พบพนักงาน'}), 404
+
+    row, err = _resolve_catalog(conn, d)
+    if err:
+        conn.close()
+        return jsonify({'error': err}), 400
+
+    dup = conn.execute(
+        'SELECT id FROM software_assignments WHERE employee_id=? AND software_id=?',
+        (eid, row['id'])).fetchone()
+    if dup:
+        conn.close()
+        return jsonify({'error': f'มี "{row["name"]}" อยู่แล้ว'}), 409
+
+    cur = conn.execute(
+        '''INSERT INTO software_assignments (employee_id, software, software_id, note)
+           VALUES (?,?,?,?)''', (eid, row['name'], row['id'], note))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id})
+
+
+@app.route('/api/employees/<int:eid>/software/<int:sid>', methods=['PUT'])
+def update_employee_software(eid, sid):
+    d    = request.json or {}
+    note = (d.get('note') or '').strip()
+
+    conn = get_db()
+    row, err = _resolve_catalog(conn, d)
+    if err:
+        conn.close()
+        return jsonify({'error': err}), 400
+
+    dup = conn.execute(
+        'SELECT id FROM software_assignments WHERE employee_id=? AND software_id=? AND id<>?',
+        (eid, row['id'], sid)).fetchone()
+    if dup:
+        conn.close()
+        return jsonify({'error': f'มี "{row["name"]}" อยู่แล้ว'}), 409
+
+    cur = conn.execute(
+        '''UPDATE software_assignments SET software=?, software_id=?, note=?
+           WHERE id=? AND employee_id=?''', (row['name'], row['id'], note, sid, eid))
+    conn.commit()
+    changed = cur.rowcount
+    conn.close()
+    if not changed:
+        return jsonify({'error': 'ไม่พบรายการ'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/employees/<int:eid>/software/batch', methods=['POST'])
+def batch_employee_software(eid):
+    """บันทึกการเปลี่ยนแปลงทั้งชุดในครั้งเดียว — ผู้ใช้เลือกหลายตัวแล้วกดยืนยันทีเดียว
+    body: { add: [{software_id, note}], update: [{id, note}], remove: [id, ...] }
+    ตรวจให้ผ่านทั้งหมดก่อนจึงเขียน ถ้ามีอันใดผิดจะไม่เขียนอะไรเลย
+    """
+    d       = request.json or {}
+    adds    = d.get('add')    or []
+    updates = d.get('update') or []
+    removes = d.get('remove') or []
+
+    conn = get_db()
+    if not conn.execute('SELECT 1 FROM employees WHERE id=?', (eid,)).fetchone():
+        conn.close()
+        return jsonify({'error': 'ไม่พบพนักงาน'}), 404
+
+    current = {r['id']: r['software_id'] for r in conn.execute(
+        'SELECT id, software_id FROM software_assignments WHERE employee_id=?', (eid,))}
+
+    unknown = [i for i in list(removes) + [u.get('id') for u in updates] if i not in current]
+    if unknown:
+        conn.close()
+        return jsonify({'error': 'มีรายการที่ไม่ใช่ของพนักงานคนนี้ หรือถูกลบไปแล้ว'}), 409
+
+    # ชุดที่จะเหลือหลังลบ ใช้กันเพิ่มซ้ำ
+    remaining = {sid for rid, sid in current.items() if rid not in removes}
+    resolved  = []
+    for a in adds:
+        row, err = _resolve_catalog(conn, a)
+        if err:
+            conn.close()
+            return jsonify({'error': err}), 400
+        if row['id'] in remaining:
+            conn.close()
+            return jsonify({'error': f'มี "{row["name"]}" อยู่แล้ว'}), 409
+        remaining.add(row['id'])
+        resolved.append((row, (a.get('note') or '').strip()))
+
+    for rid in removes:
+        conn.execute('DELETE FROM software_assignments WHERE id=? AND employee_id=?', (rid, eid))
+    for u in updates:
+        conn.execute('UPDATE software_assignments SET note=? WHERE id=? AND employee_id=?',
+                     ((u.get('note') or '').strip(), u['id'], eid))
+    for row, note in resolved:
+        conn.execute(
+            '''INSERT INTO software_assignments (employee_id, software, software_id, note)
+               VALUES (?,?,?,?)''', (eid, row['name'], row['id'], note))
+    conn.commit()
+    total = conn.execute('SELECT COUNT(*) c FROM software_assignments WHERE employee_id=?',
+                         (eid,)).fetchone()['c']
+    conn.close()
+    return jsonify({'ok': True, 'added': len(resolved), 'updated': len(updates),
+                    'removed': len(removes), 'total': total})
+
+
+@app.route('/api/employees/<int:eid>/software/<int:sid>', methods=['DELETE'])
+def delete_employee_software(eid, sid):
+    conn = get_db()
+    cur  = conn.execute(
+        'DELETE FROM software_assignments WHERE id=? AND employee_id=?', (sid, eid))
+    conn.commit()
+    changed = cur.rowcount
+    conn.close()
+    if not changed:
+        return jsonify({'error': 'ไม่พบรายการ'}), 404
+    return jsonify({'ok': True})
 
 
 @app.route('/api/assets/transfer-bulk', methods=['POST'])
@@ -1783,6 +2239,487 @@ def rental_export():
     wb.save(buf); buf.seek(0)
     tag = '_'.join(filter(None, ['-'.join(bu_f), '-'.join(year_f)])) or 'all'
     fname = f"rental_plan_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+    return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                     as_attachment=True, download_name=fname)
+
+
+# ---------- Dashboard: บริหาร Software ----------
+
+def _software_rows(conn):
+    """license ทุกใบ พร้อมข้อมูลผู้ถือครอง — ฐานของทุกตัวเลขในหน้านี้"""
+    return conn.execute('''
+        SELECT a.id, a.software_id, a.note, a.created_at,
+               COALESCE(c.name, a.software) AS name,
+               c.category, c.vendor, c.license_type, c.is_active,
+               e.id AS emp_id, e.emp_code, e.name AS emp_name, e.bu_code,
+               e.department, e.position, e.status
+        FROM software_assignments a
+        LEFT JOIN software_catalog c ON c.id = a.software_id
+        LEFT JOIN employees e        ON e.id = a.employee_id
+        ORDER BY name COLLATE NOCASE, e.bu_code, e.name
+    ''').fetchall()
+
+
+@app.route('/api/dashboard/software', methods=['GET'])
+def dashboard_software():
+    from collections import defaultdict
+
+    conn = get_db()
+    rows = _software_rows(conn)
+    catalog = conn.execute(
+        'SELECT id, name, category, vendor, license_type, is_active FROM software_catalog'
+    ).fetchall()
+    emp_active = conn.execute(
+        "SELECT COUNT(*) c FROM employees WHERE status='active'").fetchone()['c']
+    bus = [r['bu_code'] for r in conn.execute(
+        'SELECT DISTINCT bu_code FROM employees WHERE bu_code != "" ORDER BY bu_code')]
+    emp_by_bu = {r['bu_code']: r['c'] for r in conn.execute(
+        "SELECT bu_code, COUNT(*) c FROM employees WHERE status='active' AND bu_code != '' "
+        "GROUP BY bu_code")}
+    conn.close()
+
+    NO_BU = 'ไม่ระบุ BU'
+    bu_of = lambda r: (r['bu_code'] or NO_BU)
+
+    per_sw   = defaultdict(lambda: {'total': 0, 'by_bu': defaultdict(int), 'inactive': 0})
+    per_bu   = defaultdict(lambda: {'licenses': 0, 'emps': set()})
+    holders  = set()
+    orphan   = 0      # license ที่หาเจ้าของใน HR ไม่เจอแล้ว
+    inactive = []     # license ค้างที่พนักงานที่ไม่ active
+
+    for r in rows:
+        key = r['software_id'] or ('name:' + (r['name'] or ''))
+        s = per_sw[key]
+        s['total'] += 1
+        s['by_bu'][bu_of(r)] += 1
+        s.setdefault('meta', {'id': r['software_id'], 'name': r['name'],
+                              'category': r['category'], 'vendor': r['vendor'],
+                              'license_type': r['license_type'],
+                              'is_active': r['is_active']})
+        if r['emp_id'] is None:
+            orphan += 1
+        else:
+            holders.add(r['emp_id'])
+            per_bu[bu_of(r)]['licenses'] += 1
+            per_bu[bu_of(r)]['emps'].add(r['emp_id'])
+        if r['status'] and r['status'] != 'active':
+            s['inactive'] += 1
+            inactive.append({
+                'assignment_id': r['id'], 'software': r['name'],
+                'emp_id': r['emp_id'], 'emp_name': r['emp_name'],
+                'emp_code': r['emp_code'], 'bu_code': r['bu_code'],
+                'department': r['department'], 'note': r['note'],
+            })
+
+    by_software = sorted(
+        [{**v['meta'], 'total': v['total'], 'inactive': v['inactive'],
+          'by_bu': dict(v['by_bu'])} for v in per_sw.values()],
+        key=lambda s: (-s['total'], (s['name'] or '').lower()))
+
+    used = {s['id'] for s in by_software if s['id']}
+    unused = sorted(
+        [dict(c) for c in catalog if c['id'] not in used],
+        key=lambda c: ((c['category'] or 'ยังไม่จัดหมวด'), c['name'].lower()))
+
+    by_bu = sorted(
+        [{'bu_code': b, 'licenses': v['licenses'], 'employees': len(v['emps']),
+          'emp_total': emp_by_bu.get(b, 0)} for b, v in per_bu.items()],
+        key=lambda x: -x['licenses'])
+
+    return jsonify({
+        'summary': {
+            'licenses':          len(rows),
+            'employees_with':    len(holders),
+            'employees_active':  emp_active,
+            'catalog_total':     len(catalog),
+            'catalog_used':      len(used),
+            'catalog_unused':    len(unused),
+            'inactive_licenses': len(inactive),
+            'orphan_licenses':   orphan,
+        },
+        'bus':         bus + [NO_BU],
+        'by_software': by_software,
+        'by_bu':       by_bu,
+        'unused':      unused,
+        'inactive':    sorted(inactive, key=lambda x: ((x['bu_code'] or ''),
+                                                       (x['emp_name'] or ''))),
+    })
+
+
+# เกณฑ์ชี้ว่าใครควรใช้ Adobe Creative Cloud (All Apps) แทนการซื้อแยกตัว
+# ถือ Adobe ตั้งแต่ 3 ตัวขึ้นไปถือว่าคุ้มกว่า — ไม่นับ Media Encoder เพราะแถมมากับ Premiere
+CC_RULE = {
+    'label':   'Creative Cloud (All Apps)',
+    'min':     3,
+    'exclude': ['Adobe Media Encoder'],
+}
+
+
+def _vendor_of(r):
+    """ผู้ผลิตของ license หนึ่งใบ — ถ้าช่อง vendor ว่าง เดาจากคำแรกของชื่อ"""
+    v = (r['vendor'] or '').strip()
+    if v:
+        return v
+    name = (r['name'] or '').strip()
+    return name.split()[0] if name else 'ไม่ระบุผู้ผลิต'
+
+
+@app.route('/api/dashboard/software/vendor', methods=['GET'])
+def dashboard_software_vendor():
+    """ไล่ดูทีละผู้ผลิต (ตั้งต้น Adobe): BU → ฝ่าย/แผนก → รายคน ว่าใครถือตัวไหน
+
+    ฐานข้อมูลพนักงานมีชั้นหน่วยงานเดียวคือ department จึงใช้ช่องนั้นเป็น "ฝ่าย"
+    """
+    from collections import defaultdict
+
+    want = (request.args.get('name') or 'Adobe').strip()
+    conn = get_db()
+    rows = _software_rows(conn)
+    catalog = conn.execute(
+        'SELECT id, name, category, vendor, license_type, is_active FROM software_catalog'
+    ).fetchall()
+    conn.close()
+
+    # รายชื่อผู้ผลิตให้เลือก — เรียงจากที่มี license มากไปน้อย
+    v_lic, v_prod = defaultdict(int), defaultdict(set)
+    for r in rows:
+        v = _vendor_of(r)
+        v_lic[v] += 1
+        v_prod[v].add(r['name'])
+    vendors = sorted(
+        [{'name': v, 'licenses': n, 'products': len(v_prod[v])} for v, n in v_lic.items()],
+        key=lambda x: (-x['licenses'], x['name'].lower()))
+
+    mine = [r for r in rows if _vendor_of(r).lower() == want.lower()]
+
+    NO_BU, NO_DEPT = 'ไม่ระบุ BU', 'ไม่ระบุฝ่าย'
+    prod_total = defaultdict(int)
+    tree       = {}   # bu → dept → emp_id → ข้อมูลคน
+    people     = set()
+
+    for r in mine:
+        prod_total[r['name']] += 1
+        bu   = r['bu_code'] or NO_BU
+        dept = r['department'] or NO_DEPT
+        eid  = r['emp_id']
+        d = tree.setdefault(bu, {}).setdefault(dept, {})
+        p = d.setdefault(eid, {
+            'emp_id': eid, 'emp_code': r['emp_code'],
+            'name': r['emp_name'] or '(ไม่พบใน HR)',
+            'position': r['position'], 'status': r['status'], 'items': [],
+        })
+        p['items'].append({'product': r['name'], 'note': r['note'] or ''})
+        if eid is not None:
+            people.add(eid)
+
+    products = sorted(prod_total.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+
+    # เกณฑ์ All Apps ใช้กับ Adobe เท่านั้น ผู้ผลิตอื่นไม่มีชุดรวมแบบนี้
+    rule = CC_RULE if want.lower() == 'adobe' else None
+    skip = {x.lower() for x in (rule['exclude'] if rule else [])}
+
+    def pack_people(d):
+        out = []
+        for p in d.values():
+            p['items'].sort(key=lambda i: i['product'].lower())
+            p['products'] = [i['product'] for i in p['items']]
+            if rule:
+                p['counted'] = [i['product'] for i in p['items']
+                                if i['product'].lower() not in skip]
+                p['cc'] = len(p['counted']) >= rule['min']
+            out.append(p)
+        out.sort(key=lambda p: (-len(p['items']), (p['name'] or '').lower()))
+        return out
+
+    def count_products(items_src):
+        c = defaultdict(int)
+        for p in items_src:
+            for i in p['items']:
+                c[i['product']] += 1
+        return dict(c)
+
+    by_bu = []
+    for bu, depts in tree.items():
+        dept_list = []
+        for dept, emps in depts.items():
+            plist = pack_people(emps)
+            dept_list.append({
+                'department': dept,
+                'licenses':   sum(len(p['items']) for p in plist),
+                'people':     len(plist),
+                'products':   count_products(plist),
+                'cc':         sum(1 for p in plist if p.get('cc')),
+                'people_list': plist,
+            })
+        dept_list.sort(key=lambda d: (-d['licenses'], d['department'].lower()))
+        by_bu.append({
+            'bu_code':  bu,
+            'licenses': sum(d['licenses'] for d in dept_list),
+            'people':   sum(d['people'] for d in dept_list),
+            'products': count_products([p for d in dept_list for p in d['people_list']]),
+            'cc':       sum(d['cc'] for d in dept_list),
+            'depts':    dept_list,
+        })
+    by_bu.sort(key=lambda b: (-b['licenses'], b['bu_code']))
+
+    held = {r['name'] for r in mine}
+    unused = sorted([c['name'] for c in catalog
+                     if _vendor_of(c).lower() == want.lower() and c['name'] not in held],
+                    key=str.lower)
+
+    return jsonify({
+        'vendor':   want,
+        'vendors':  vendors,
+        'products': [{'name': n, 'total': t} for n, t in products],
+        'unused':   unused,
+        'rule':     rule,
+        'summary': {
+            'licenses': len(mine),
+            'people':   len(people),
+            'bus':      len(by_bu),
+            'depts':    sum(len(b['depts']) for b in by_bu),
+            'products': len(products),
+            'cc':       sum(b['cc'] for b in by_bu) if rule else 0,
+        },
+        'by_bu': by_bu,
+    })
+
+
+@app.route('/api/software/catalog/<int:cid>/holders', methods=['GET'])
+def software_holders(cid):
+    """ใครถือ software ตัวนี้บ้าง — ใช้ตอนคลิกดูรายชื่อจากหน้า dashboard"""
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT a.id, a.note, a.created_at,
+               e.id AS emp_id, e.emp_code, e.name AS emp_name, e.nickname,
+               e.bu_code, e.department, e.position, e.status
+        FROM software_assignments a
+        LEFT JOIN employees e ON e.id = a.employee_id
+        WHERE a.software_id = ?
+        ORDER BY e.bu_code, e.name COLLATE NOCASE''', (cid,)).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route('/api/software/export', methods=['GET'])
+def software_export():
+    """Export ข้อมูล Software ถือครองเป็น Excel — สรุป (Software × BU) + รายการรายใบ
+
+    ?bu=AMTV,APUB → กรองเฉพาะ BU ที่ต้องการ (ว่าง = ทุก BU)
+    ?vendor=Adobe → เฉพาะผู้ผลิตนั้น แล้วเพิ่มชีท ฝ่าย × Software และ รายคน × Software
+                    (ตารางติ๊กว่าใครถือตัวไหน ใช้ทำรายงานต่อสัญญารายปี)
+    """
+    from collections import defaultdict
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    bu_f   = [x.strip() for x in (request.args.get('bu') or '').split(',') if x.strip()]
+    vendor = (request.args.get('vendor') or '').strip()
+
+    conn = get_db()
+    rows = [dict(r) for r in _software_rows(conn)]
+    unused = [dict(r) for r in conn.execute('''
+        SELECT c.name, c.category, c.vendor, c.license_type, c.is_active
+        FROM software_catalog c
+        WHERE c.id NOT IN (SELECT software_id FROM software_assignments
+                           WHERE software_id IS NOT NULL)
+        ORDER BY c.category COLLATE NOCASE, c.name COLLATE NOCASE''').fetchall()]
+    conn.close()
+
+    NO_BU, NO_DEPT = 'ไม่ระบุ BU', 'ไม่ระบุฝ่าย'
+    bu_of   = lambda r: (r['bu_code'] or NO_BU)
+    dept_of = lambda r: (r['department'] or NO_DEPT)
+    if bu_f:
+        rows = [r for r in rows if bu_of(r) in bu_f]
+    if vendor:
+        rows   = [r for r in rows if _vendor_of(r).lower() == vendor.lower()]
+        unused = [c for c in unused if _vendor_of(c).lower() == vendor.lower()]
+
+    LIC = {'subscription': 'รายปี', 'perpetual': 'ซื้อขาด',
+           'oem': 'ติดมากับเครื่อง', 'free': 'ฟรี'}
+
+    wb = Workbook()
+    HFILL  = PatternFill('solid', fgColor='1E3A5F')
+    SUBFIL = PatternFill('solid', fgColor='F1F5F9')
+    THIN   = Side(style='thin', color='D8DEE7')
+    BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+
+    def style_header(ws, ncols, row=1):
+        for c in range(1, ncols + 1):
+            cell = ws.cell(row=row, column=c)
+            cell.font = Font(color='FFFFFF', bold=True, size=10)
+            cell.fill = HFILL
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    def autosize(ws, minw=9, maxw=42):
+        for col in ws.columns:
+            width = max((len(str(c.value or '')) for c in col), default=0)
+            ws.column_dimensions[get_column_letter(col[0].column)].width = \
+                min(max(width + 2, minw), maxw)
+
+    # ── ชีท 1: สรุป Software × BU ──────────────────────────────────
+    ws = wb.active
+    ws.title = 'สรุป'
+    bu_cols = sorted({bu_of(r) for r in rows})
+    cnt = defaultdict(int)
+    for r in rows:
+        cnt[(r['name'], bu_of(r))] += 1
+    sw_keys = sorted({r['name'] for r in rows},
+                     key=lambda n: (-sum(cnt[(n, b)] for b in bu_cols), n.lower()))
+    meta = {r['name']: r for r in rows}
+
+    ws.append([('สรุป Software ที่พนักงานถือครอง' if not vendor
+                else f'สรุป Software ของ {vendor} ที่พนักงานถือครอง')])
+    ws['A1'].font = Font(bold=True, size=13)
+    ws.append(['ตัวกรอง: ' + ' · '.join(filter(None, [
+        'BU: ' + ', '.join(bu_f) if bu_f else 'ทุก BU',
+        'ผู้ผลิต: ' + vendor if vendor else None]))])
+    ws['A2'].font = Font(size=9, color='64748B')
+    ws.append(['ออกรายงานเมื่อ ' + datetime.now().strftime('%d/%m/%Y %H:%M น.') +
+               '  ·  รวม %d license' % len(rows)])
+    ws['A3'].font = Font(size=9, color='64748B')
+    ws.append([])
+
+    head_row = ws.max_row + 1
+    ws.append(['Software', 'หมวด', 'ลิขสิทธิ์'] + bu_cols + ['รวม'])
+    style_header(ws, 4 + len(bu_cols), head_row)
+    for n in sw_keys:
+        m = meta[n]
+        ws.append([n, m['category'] or '', LIC.get(m['license_type'], m['license_type'] or '')] +
+                  [cnt[(n, b)] or '' for b in bu_cols] +
+                  [sum(cnt[(n, b)] for b in bu_cols)])
+    total_row = ws.max_row + 1
+    ws.append(['รวมทุก Software', '', ''] +
+              [sum(cnt[(n, b)] for n in sw_keys) for b in bu_cols] + [len(rows)])
+    for c in range(1, 5 + len(bu_cols)):
+        ws.cell(row=total_row, column=c).font = Font(bold=True)
+        ws.cell(row=total_row, column=c).fill = SUBFIL
+    for row in ws.iter_rows(min_row=head_row, max_row=total_row, max_col=4 + len(bu_cols)):
+        for cell in row:
+            cell.border = BORDER
+            if cell.column > 3:
+                cell.alignment = Alignment(horizontal='right')
+    ws.freeze_panes = ws.cell(row=head_row + 1, column=4)
+    autosize(ws)
+
+    # ── ชีท 2: รายการรายใบ ────────────────────────────────────────
+    ws2 = wb.create_sheet('รายการ license')
+    headers = ['Software', 'หมวด', 'ผู้ผลิต', 'ลิขสิทธิ์', 'รหัสพนักงาน', 'ชื่อ-สกุล',
+               'BU', 'แผนก', 'ตำแหน่ง', 'สถานะพนักงาน', 'หมายเหตุ', 'วันที่บันทึก']
+    ws2.append(headers)
+    style_header(ws2, len(headers))
+    for r in rows:
+        ws2.append([
+            r['name'], r['category'] or '', r['vendor'] or '',
+            LIC.get(r['license_type'], r['license_type'] or ''),
+            r['emp_code'] or '', r['emp_name'] or '(ไม่พบใน HR)',
+            r['bu_code'] or '', r['department'] or '', r['position'] or '',
+            'Active' if r['status'] == 'active' else ('Inactive' if r['status'] else '—'),
+            r['note'] or '', (r['created_at'] or '')[:10],
+        ])
+    ws2.auto_filter.ref = ws2.dimensions
+    ws2.freeze_panes = 'A2'
+    autosize(ws2)
+
+    # ── ชีทเพิ่มเมื่อดูเป็นผู้ผลิต: ฝ่าย × Software และ รายคน × Software ──
+    if vendor and rows:
+        prods = sorted({r['name'] for r in rows},
+                       key=lambda n: (-sum(1 for r in rows if r['name'] == n), n.lower()))
+
+        # เกณฑ์ All Apps: ถือ Adobe ≥ 3 ตัว (ไม่นับ Media Encoder)
+        rule = CC_RULE if vendor.lower() == 'adobe' else None
+        skip = {x.lower() for x in (rule['exclude'] if rule else [])}
+        per_emp = defaultdict(set)
+        for r in rows:
+            if r['emp_id'] is not None:
+                per_emp[r['emp_id']].add(r['name'])
+        cc_emp = {e for e, ps in per_emp.items()
+                  if rule and len([p for p in ps if p.lower() not in skip]) >= rule['min']}
+
+        wsd = wb.create_sheet(f'ฝ่าย × {vendor}'[:31])
+        wsd.append(['BU', 'ฝ่าย / แผนก', 'จำนวนคน'] + prods +
+                   ['รวม license'] + (['ควรใช้ All Apps (คน)'] if rule else []))
+        style_header(wsd, 4 + len(prods) + (1 if rule else 0))
+        dcnt = defaultdict(int)
+        dpeople = defaultdict(set)
+        for r in rows:
+            dcnt[(bu_of(r), dept_of(r), r['name'])] += 1
+            if r['emp_id'] is not None:
+                dpeople[(bu_of(r), dept_of(r))].add(r['emp_id'])
+        keys = sorted({(bu_of(r), dept_of(r)) for r in rows},
+                      key=lambda k: (k[0], -sum(dcnt[(k[0], k[1], p)] for p in prods), k[1]))
+        for bu, dept in keys:
+            line = [bu, dept, len(dpeople[(bu, dept)])]
+            line += [dcnt[(bu, dept, p)] or '' for p in prods]
+            line += [sum(dcnt[(bu, dept, p)] for p in prods)]
+            if rule:
+                line += [len(dpeople[(bu, dept)] & cc_emp) or '']
+            wsd.append(line)
+        trow = wsd.max_row + 1
+        wsd.append(['รวมทุกฝ่าย', '', len({r['emp_id'] for r in rows if r['emp_id'] is not None})] +
+                   [sum(dcnt[(b, d, p)] for b, d in keys) for p in prods] + [len(rows)] +
+                   ([len(cc_emp)] if rule else []))
+        for c in range(1, 5 + len(prods) + (1 if rule else 0)):
+            wsd.cell(row=trow, column=c).font = Font(bold=True)
+            wsd.cell(row=trow, column=c).fill = SUBFIL
+        for row in wsd.iter_rows(min_row=1, max_row=trow,
+                                 max_col=4 + len(prods) + (1 if rule else 0)):
+            for cell in row:
+                cell.border = BORDER
+                if cell.column > 2:
+                    cell.alignment = Alignment(horizontal='right')
+        wsd.freeze_panes = 'C2'
+        autosize(wsd)
+
+        wsp = wb.create_sheet(f'รายคน × {vendor}'[:31])
+        wsp.append(['BU', 'ฝ่าย / แผนก', 'รหัส', 'ชื่อ-สกุล', 'ตำแหน่ง', 'สถานะ'] +
+                   prods + ['รวม'] +
+                   ([f"ควรใช้ {rule['label']} (≥{rule['min']} ตัว)"] if rule else []))
+        style_header(wsp, 7 + len(prods) + (1 if rule else 0))
+        held = defaultdict(set)
+        info = {}
+        for r in rows:
+            k = (bu_of(r), dept_of(r), r['emp_id'], r['emp_name'] or '(ไม่พบใน HR)')
+            held[k].add(r['name'])
+            info[k] = r
+        for k in sorted(held, key=lambda k: (k[0], k[1], -len(held[k]), (k[3] or '').lower())):
+            r = info[k]
+            counted = [p for p in held[k] if p.lower() not in skip] if rule else []
+            wsp.append([k[0], k[1], r['emp_code'] or '', k[3], r['position'] or '',
+                        'Active' if r['status'] == 'active'
+                        else ('Inactive' if r['status'] else '—')] +
+                       ['✓' if p in held[k] else '' for p in prods] + [len(held[k])] +
+                       ((['✓'] if len(counted) >= rule['min'] else ['']) if rule else []))
+        for row in wsp.iter_rows(min_row=1, max_row=wsp.max_row,
+                                 max_col=7 + len(prods) + (1 if rule else 0)):
+            for cell in row:
+                cell.border = BORDER
+                if cell.column > 6:
+                    cell.alignment = Alignment(horizontal='center')
+        if rule:   # คอลัมน์ All Apps ให้เป็นเครื่องหมายถูกสีแดง เหมือนบนหน้าจอ
+            ccol = 7 + len(prods) + 1
+            for r_ in range(2, wsp.max_row + 1):
+                wsp.cell(row=r_, column=ccol).font = Font(color='DC2626', bold=True)
+        wsp.auto_filter.ref = wsp.dimensions
+        wsp.freeze_panes = 'E2'
+        autosize(wsp)
+
+    # ── ชีท 3: ในคลังแต่ยังไม่มีใครถือ ─────────────────────────────
+    ws3 = wb.create_sheet('ยังไม่มีผู้ถือครอง')
+    ws3.append(['Software', 'หมวด', 'ผู้ผลิต', 'ลิขสิทธิ์', 'สถานะในคลัง'])
+    style_header(ws3, 5)
+    for c in unused:
+        ws3.append([c['name'], c['category'] or '', c['vendor'] or '',
+                    LIC.get(c['license_type'], c['license_type'] or ''),
+                    'เปิดใช้งาน' if c['is_active'] else 'ปิดใช้งาน'])
+    ws3.freeze_panes = 'A2'
+    autosize(ws3)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    tag = '-'.join(bu_f) or 'all'
+    fname = f"software_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                      as_attachment=True, download_name=fname)
 

@@ -5,6 +5,7 @@ __pycache__/
 
 # ข้อมูลจริง — ไม่ push ขึ้น GitHub
 employees.db
+backups/
 edevice_assets.json
 employees_extracted.json
 amarin_orgchart_full.html
