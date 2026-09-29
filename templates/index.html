@@ -595,7 +595,7 @@
           </div>
           <div>
             <label>ผู้ผลิต</label>
-            <input id="swc-vendor" type="text" placeholder="เช่น Adobe">
+            <input id="swc-vendor" type="text" placeholder="เช่น Adobe" oninput="renderSwcMembers()">
           </div>
           <div>
             <label>ประเภทลิขสิทธิ์</label>
@@ -607,6 +607,31 @@
               <option value="free">ฟรี / Freeware</option>
             </select>
           </div>
+          <div>
+            <label>จำนวนที่ซื้อ (license)</label>
+            <input id="swc-seats" type="number" min="0" step="1" placeholder="ยังไม่ระบุ">
+          </div>
+          <div>
+            <label>วันหมดอายุ / ต่ออายุ</label>
+            <input id="swc-renew" type="date">
+          </div>
+          <div>
+            <label>ราคาต่อ license (บาท)</label>
+            <input id="swc-price" type="number" min="0" step="0.01" placeholder="ไม่บังคับ">
+          </div>
+          <div class="swc-bundle-cell">
+            <label class="swcat-active" style="margin-top:18px">
+              <input type="checkbox" id="swc-bundle" onchange="renderSwcMembers()">
+              <span>เป็นชุดรวม (1 license ใช้ได้หลายโปรแกรม)</span>
+            </label>
+          </div>
+        </div>
+        <div id="swc-members-wrap" class="swc-members-wrap" style="display:none">
+          <div class="swc-members-head">
+            ชุดนี้ครอบคลุมโปรแกรม <span id="swc-members-count"></span>
+            <span class="swc-members-hint">— ตั้งครั้งเดียว ไม่ต้องกรอกตัวข้างในให้ทุกคน</span>
+          </div>
+          <div id="swc-members" class="swc-members"></div>
         </div>
         <div class="swcat-form-row">
           <input id="swc-note" type="text" placeholder="หมายเหตุ (ไม่บังคับ)" style="flex:1">
@@ -977,6 +1002,27 @@
       <div id="sv-summary" class="sv-summary"></div>
       <div id="sv-products" class="sv-products"></div>
       <div id="sv-tree"></div>
+    </div>
+
+    <!-- แผนต่ออายุ license -->
+    <div class="dash-panel" id="sg-panel" style="margin-bottom:16px;display:none">
+      <div class="sd-head">
+        <h3 style="margin:0">📋 แผนต่ออายุ license — <span id="sg-title">Adobe</span></h3>
+        <div class="sd-head-tools">
+          <span id="sg-rule-note" style="font-size:.73rem;color:#94a3b8"></span>
+        </div>
+      </div>
+      <div class="dash-row" style="align-items:start">
+        <div>
+          <h4 class="sg-h4">ต้องต่อ / ซื้อ อย่างละกี่ license</h4>
+          <div id="sg-plan"></div>
+          <div id="sg-plan-foot" class="sg-note"></div>
+        </div>
+        <div>
+          <h4 class="sg-h4">แยกตาม BU และฝ่าย</h4>
+          <div id="sg-plan-bu" style="overflow-x:auto;max-height:430px;overflow-y:auto"></div>
+        </div>
+      </div>
     </div>
 
     <!-- ความครบของข้อมูลแยก BU -->

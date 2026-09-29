@@ -160,6 +160,8 @@ let swCurrentEmp = null; // {id, name}
 let swRows       = [];   // ร่างรายการในหน้าถือครอง — ยังไม่บันทึกจนกว่าจะกดยืนยัน
 let swRowSeq     = 0;    // ตัวนับ key ของแถวในร่าง
 let swCatEditId  = null; // id catalog ที่กำลังแก้ไขในหน้าคลัง
+let swcMembers    = new Set();  // โปรแกรมที่ชุดรวมซึ่งกำลังแก้ครอบคลุม
+let swcMembersAll = false;      // แสดงโปรแกรมของผู้ผลิตอื่นด้วย
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
@@ -458,8 +460,20 @@ async function saveEmployee() {
         transfers: transferAssets.map(t => ({ asset_no: t.asset_no, to_type: t.to_type, to_employee_id: t.to_employee_id }))
       });
     }
-    await api('/api/employees/' + id, 'PUT', payload);
-    showToast('อัปเดตข้อมูลเรียบร้อย', 'success');
+    // เปลี่ยนเป็น Inactive → Software ที่ถืออยู่จะถูกถอนคืนคลัง แจ้งให้รู้ก่อน
+    const swN = swEmpMap[parseInt(id)] || 0;
+    if (payload.status === 'inactive' && swN &&
+        !confirm(`พนักงานคนนี้ถือ Software อยู่ ${swN} รายการ\n` +
+                 `เมื่อเปลี่ยนเป็น Inactive ระบบจะถอนคืนคลังทั้งหมด (มีบันทึกประวัติไว้)\n\nยืนยัน?`)) return;
+    const res = await api('/api/employees/' + id, 'PUT', payload);
+    if (res.software_released) {
+      showToast(`อัปเดตแล้ว · ถอน Software คืนคลัง ${res.software_released} รายการ`, 'success');
+      swDash = swVendor = null;
+      loadSoftwareEmpMap();
+      refreshSoftwareFilterOptions();
+    } else {
+      showToast('อัปเดตข้อมูลเรียบร้อย', 'success');
+    }
   } else {
     await api('/api/employees', 'POST', payload);
     showToast('เพิ่มพนักงานเรียบร้อย', 'success');
@@ -1109,7 +1123,7 @@ function refreshSwCells() {
 // การแก้ทุกอย่างเป็นแค่ "ร่าง" อยู่ใน swRows จนกว่าจะกดยืนยัน แล้วส่งทีเดียวผ่าน /software/batch
 
 async function openSoftware(empId, empName) {
-  swCurrentEmp = { id: empId, name: empName };
+  swCurrentEmp = { id: empId, name: empName, inactive: false };
   document.getElementById('sw-subtitle').textContent = empName;
   swSetError('');
   document.getElementById('sw-list').innerHTML =
@@ -1117,6 +1131,11 @@ async function openSoftware(empId, empName) {
   document.getElementById('software-overlay').classList.add('open');
 
   if (!swCatalog.length) { try { await loadSwCatalogData(false); } catch (e) {} }
+  // คน Inactive ถูกถอน Software คืนคลังแล้ว — เพิ่มใหม่ไม่ได้
+  try {
+    const emp = await api('/api/employees/' + empId);
+    swCurrentEmp.inactive = emp.status !== 'active';
+  } catch (e) {}
   await reloadSwRows();
   document.getElementById('sw-select').focus();
 }
@@ -1128,9 +1147,10 @@ async function reloadSwRows() {
     key: ++swRowSeq, id: s.id, software_id: s.software_id, name: s.software,
     category: s.category, license_type: s.license_type, is_active: s.is_active,
     note: s.note || '', origNote: s.note || '', isNew: false, removed: false,
-    created_at: s.created_at,
+    created_at: s.created_at, is_bundle: s.is_bundle, covers: s.covers || [],
   }));
-  swEmpMap[swCurrentEmp.id] = list.length;
+  // ชุดรวมนับเป็น 1 — โปรแกรมที่อยู่ในชุดไม่นับซ้ำ (ให้ตรงกับ /software/employee-map)
+  swEmpMap[swCurrentEmp.id] = list.filter(s => !(s.covered_by || []).length).length;
   refreshSwCells();
   renderSwRows();
 }
@@ -1141,6 +1161,11 @@ function fillSwSelect() {
   const taken = new Set(swRows.filter(r => !r.removed).map(r => r.software_id));
   const avail = swCatalog.filter(c => c.is_active !== 0 && !taken.has(c.id));
 
+  sel.disabled = !!(swCurrentEmp && swCurrentEmp.inactive);
+  if (sel.disabled) {
+    sel.innerHTML = '<option value="">— พนักงาน Inactive: Software ถูกถอนคืนคลังแล้ว เพิ่มไม่ได้ —</option>';
+    return;
+  }
   if (!avail.length) {
     sel.innerHTML = swCatalog.length
       ? '<option value="">— เลือกครบทุกรายการในคลังแล้ว —</option>'
@@ -1156,7 +1181,8 @@ function fillSwSelect() {
       <optgroup label="${esc(cat)}">
         ${byCat[cat].map(c => {
           const lic = SW_LICENSE_LABEL[c.license_type] || '';
-          return `<option value="${c.id}">${esc(c.name)}${lic ? ' · ' + lic : ''}</option>`;
+          const bun = c.is_bundle ? ` · ชุดรวม ${(c.members || []).length} โปรแกรม` : '';
+          return `<option value="${c.id}">${esc(c.name)}${bun}${lic ? ' · ' + lic : ''}</option>`;
         }).join('')}
       </optgroup>`).join('');
 }
@@ -1175,6 +1201,7 @@ function onSwSelectChange() {
     key: ++swRowSeq, id: null, software_id: c.id, name: c.name,
     category: c.category, license_type: c.license_type, is_active: c.is_active,
     note: '', origNote: '', isNew: true, removed: false, created_at: null,
+    is_bundle: c.is_bundle, covers: (c.members || []).map(m => m.name),
   });
   renderSwRows();
 
@@ -1197,25 +1224,47 @@ function renderSwRows() {
     return;
   }
 
-  const active = swRows.filter(r => !r.removed).length;
-  el.innerHTML = `
-    <div class="sw-count">${active} รายการ</div>
-    ${swRows.map(r => {
-      const lic  = SW_LICENSE_LABEL[r.license_type] || '';
-      const edit = !r.isNew && !r.removed && r.note !== r.origNote;
-      const cls  = r.removed ? ' removed' : (r.isNew ? ' staged' : (edit ? ' edited' : ''));
-      const tag  = r.removed ? '<span class="sw-tag del">จะลบ</span>'
-                 : r.isNew   ? '<span class="sw-tag new">เพิ่มใหม่</span>'
-                 : edit      ? '<span class="sw-tag edit">แก้หมายเหตุ</span>' : '';
-      return `
-      <div class="sw-item${cls}" data-key="${r.key}">
+  // โปรแกรมที่อยู่ในชุดรวมที่คนนี้ถือ → ย้ายไปแสดงเป็นรายการย่อยใต้ชุดรวม
+  const bundles  = swRows.filter(r => r.is_bundle && !r.removed);
+  const members  = b => {
+    const c = swCatalog.find(x => x.id === b.software_id);
+    return c ? c.members : [];
+  };
+  const parentOf = {};
+  swRows.forEach(r => {
+    if (r.is_bundle) return;
+    const b = bundles.find(b => members(b).some(m => m.id === r.software_id));
+    if (b) parentOf[r.key] = b.key;
+  });
+  const childrenOf = b => swRows.filter(r => parentOf[r.key] === b.key);
+  // ชุดรวมนับเป็น 1 รายการ — โปรแกรมย่อยข้างในไม่นับซ้ำ
+  const active = swRows.filter(r => !r.removed && !parentOf[r.key]).length;
+
+  const rowHtml = (r, child) => {
+    const lic  = SW_LICENSE_LABEL[r.license_type] || '';
+    const edit = !r.isNew && !r.removed && r.note !== r.origNote;
+    const cls  = r.removed ? ' removed' : (r.isNew ? ' staged' : (edit ? ' edited' : ''));
+    const tag  = r.removed ? '<span class="sw-tag del">จะลบ</span>'
+               : r.isNew   ? '<span class="sw-tag new">เพิ่มใหม่</span>'
+               : edit      ? '<span class="sw-tag edit">แก้หมายเหตุ</span>' : '';
+    let meta;
+    if (r.is_bundle) {
+      const used = childrenOf(r).filter(c => !c.removed).length;
+      meta = r.removed ? `ชุดรวม ${r.covers.length} โปรแกรม`
+                       : `ชุดรวม · ใช้อยู่ ${used} จาก ${r.covers.length} โปรแกรม`;
+    } else {
+      meta = (r.category ? esc(r.category) : '<span style="color:#cbd5e1">ไม่ระบุหมวด</span>') +
+             (lic && !child ? ' · ' + lic : '');
+    }
+    return `
+      <div class="sw-item${cls}${r.is_bundle && !r.removed ? ' sw-bundle-main' : ''}${child ? ' sw-child' : ''}"
+           data-key="${r.key}">
         <div class="sw-item-main">
           <div class="sw-item-name">${esc(r.name)} ${tag}
+            ${r.is_bundle ? '<span class="sw-bundle-tag">ชุดรวม</span>' : ''}
             ${r.is_active === 0 ? '<span class="sw-off">ปิดใช้งานในคลัง</span>' : ''}
           </div>
-          <div class="sw-item-meta">
-            ${r.category ? esc(r.category) : '<span style="color:#cbd5e1">ไม่ระบุหมวด</span>'}
-            ${lic ? ' · ' + lic : ''}
+          <div class="sw-item-meta">${meta}
             ${r.created_at ? ' · บันทึก ' + _dateFmt(r.created_at.slice(0, 10)) : ''}
           </div>
         </div>
@@ -1225,7 +1274,29 @@ function renderSwRows() {
         <button class="icon-btn ${r.removed ? 'undo' : 'del'}" onclick="toggleSwRemove(${r.key})"
                 title="${r.removed ? 'ยกเลิกการลบ' : 'เอาออก'}">${r.removed ? '↩' : '🗑️'}</button>
       </div>`;
-    }).join('')}`;
+  };
+
+  const groupHtml = b => {
+    const kids  = childrenOf(b);
+    const have  = new Set(kids.filter(k => !k.removed).map(k => k.software_id));
+    const other = members(b).filter(m => !have.has(m.id)).map(m => m.name);
+    return `
+      <div class="sw-group">
+        ${rowHtml(b, false)}
+        <div class="sw-children">
+          ${kids.map(k => rowHtml(k, true)).join('')}
+          ${!kids.length ? '<div class="sw-child-empty">ยังไม่ได้บันทึกว่าใช้โปรแกรมไหน</div>' : ''}
+          ${other.length ? `<div class="sw-covers-more">ใช้ได้อีก: ${other.map(esc).join(', ')}</div>` : ''}
+        </div>
+      </div>`;
+  };
+
+  // ชุดรวมขึ้นก่อน (พร้อมรายการย่อย) แล้วตามด้วยตัวที่ซื้อแยก
+  const top = swRows.filter(r => !parentOf[r.key]);
+  el.innerHTML = `
+    <div class="sw-count">${active} รายการ</div>
+    ${top.filter(r => bundles.includes(r)).map(groupHtml).join('')}
+    ${top.filter(r => !bundles.includes(r)).map(r => rowHtml(r, false)).join('')}`;
   updateSwFooter();
 }
 
@@ -1238,9 +1309,15 @@ function onSwNoteInput(key, val) {
   if (item && !r.isNew && !r.removed) {
     const changed = r.note !== r.origNote;
     item.classList.toggle('edited', changed);
-    item.querySelector('.sw-item-name').innerHTML = esc(r.name) +
-      (changed ? ' <span class="sw-tag edit">แก้หมายเหตุ</span>' : '') +
-      (r.is_active === 0 ? ' <span class="sw-off">ปิดใช้งานในคลัง</span>' : '');
+    // สลับเฉพาะป้าย "แก้หมายเหตุ" — ป้ายอื่น (ชุดรวม ฯลฯ) คงไว้
+    const nameEl = item.querySelector('.sw-item-name');
+    const old    = nameEl.querySelector('.sw-tag.edit');
+    if (changed && !old) {
+      nameEl.firstChild.after(Object.assign(document.createElement('span'),
+        { className: 'sw-tag edit', textContent: 'แก้หมายเหตุ' }), ' ');
+    } else if (!changed && old) {
+      old.remove();
+    }
   }
   updateSwFooter();
 }
@@ -1326,6 +1403,7 @@ function syncSwRowsWithCatalog() {
     if (c) {
       r.name = c.name; r.category = c.category;
       r.license_type = c.license_type; r.is_active = c.is_active;
+      r.is_bundle = c.is_bundle; r.covers = (c.members || []).map(m => m.name);
     }
   });
   renderSwRows();
@@ -1403,8 +1481,12 @@ function renderSwCatalog() {
     (c.category || '').toLowerCase().includes(q) ||
     (c.vendor || '').toLowerCase().includes(q));
 
-  document.getElementById('swc-count').textContent =
-    `${rows.length} รายการ` + (q ? ` (จาก ${swCatalog.length})` : '');
+  const nOver  = swCatalog.filter(c => c.over > 0).length;
+  const nNoSet = swCatalog.filter(c => c.seats == null && c.used > 0).length;
+  document.getElementById('swc-count').innerHTML =
+    `${rows.length} รายการ` + (q ? ` (จาก ${swCatalog.length})` : '') +
+    (nOver  ? ` · <b style="color:#dc2626">ใช้เกินจำนวนซื้อ ${nOver}</b>` : '') +
+    (nNoSet ? ` · <span style="color:#b45309">ยังไม่ระบุจำนวนซื้อ ${nNoSet}</span>` : '');
 
   if (!rows.length) {
     el.innerHTML = '<div class="sw-empty">ไม่พบรายการ</div>';
@@ -1418,20 +1500,25 @@ function renderSwCatalog() {
     <div class="swcat-group">
       <div class="swcat-group-head">${esc(cat)} <span>${byCat[cat].length}</span></div>
       ${byCat[cat].map(c => `
-        <div class="swcat-row${c.is_active === 0 ? ' off' : ''}">
+        <div class="swcat-row${c.is_active === 0 ? ' off' : ''}${c.over > 0 ? ' over' : ''}">
           <div class="swcat-main">
             <div class="swcat-name">${esc(c.name)}
+              ${c.is_bundle ? '<span class="sw-bundle-tag">ชุดรวม</span>' : ''}
               ${c.is_active === 0 ? '<span class="sw-off">ปิดใช้งาน</span>' : ''}
             </div>
             <div class="swcat-meta">
               ${c.vendor ? esc(c.vendor) : '<span style="color:#cbd5e1">ไม่ระบุผู้ผลิต</span>'}
               ${c.license_type ? ' · ' + (SW_LICENSE_LABEL[c.license_type] || esc(c.license_type)) : ''}
+              ${c.renew_date ? ' · ' + swRenewHtml(c.renew_date) : ''}
+              ${c.unit_price != null ? ' · ' + Number(c.unit_price).toLocaleString('th-TH') + ' บาท/license' : ''}
               ${c.note ? ' · ' + esc(c.note) : ''}
             </div>
+            ${c.is_bundle && c.members.length ? `<div class="sw-covers">ครอบคลุม ${c.members.length} โปรแกรม:
+              ${c.members.map(m => esc(m.name)).join(', ')}</div>` : ''}
+            ${c.is_bundle && !c.members.length ? `<div class="sw-covers" style="color:#b45309">
+              ยังไม่ได้เลือกโปรแกรมที่ชุดนี้ครอบคลุม — กด ✏️</div>` : ''}
           </div>
-          <div class="swcat-holders" title="จำนวนพนักงานที่ถือครอง">
-            ${c.holders ? `👤 ${c.holders}` : '<span style="color:#cbd5e1">—</span>'}
-          </div>
+          ${swSeatCellHtml(c)}
           <div class="action-btns">
             <button class="icon-btn edit" onclick="startSwCatalogEdit(${c.id})" title="แก้ไข">✏️</button>
             <button class="icon-btn del" onclick="deleteSwCatalog(${c.id})"
@@ -1457,6 +1544,13 @@ function startSwCatalogEdit(cid) {
   document.getElementById('swc-license').value  = c.license_type || '';
   document.getElementById('swc-note').value     = c.note || '';
   document.getElementById('swc-active').checked = c.is_active !== 0;
+  document.getElementById('swc-seats').value    = c.seats ?? '';
+  document.getElementById('swc-renew').value    = c.renew_date || '';
+  document.getElementById('swc-price').value    = c.unit_price ?? '';
+  document.getElementById('swc-bundle').checked = !!c.is_bundle;
+  swcMembers = new Set((c.members || []).map(m => m.id));
+  swcMembersAll = false;
+  renderSwcMembers();
   document.getElementById('swc-active-wrap').style.display = '';
   document.getElementById('swc-save-btn').textContent = 'บันทึก';
   document.getElementById('swc-cancel-btn').style.display = '';
@@ -1467,10 +1561,15 @@ function startSwCatalogEdit(cid) {
 
 function cancelSwCatalogEdit() {
   swCatEditId = null;
-  ['swc-name', 'swc-category', 'swc-vendor', 'swc-note'].forEach(id => {
+  ['swc-name', 'swc-category', 'swc-vendor', 'swc-note',
+   'swc-seats', 'swc-renew', 'swc-price'].forEach(id => {
     document.getElementById(id).value = '';
   });
   document.getElementById('swc-license').value = '';
+  document.getElementById('swc-bundle').checked = false;
+  swcMembers = new Set();
+  swcMembersAll = false;
+  renderSwcMembers();
   document.getElementById('swc-active').checked = true;
   document.getElementById('swc-active-wrap').style.display = 'none';
   document.getElementById('swc-save-btn').textContent = 'เพิ่มเข้าคลัง';
@@ -1486,8 +1585,20 @@ async function saveSwCatalog() {
     license_type: document.getElementById('swc-license').value,
     note:         document.getElementById('swc-note').value.trim(),
     is_active:    document.getElementById('swc-active').checked ? 1 : 0,
+    seats:        document.getElementById('swc-seats').value,
+    renew_date:   document.getElementById('swc-renew').value,
+    unit_price:   document.getElementById('swc-price').value,
+    is_bundle:    document.getElementById('swc-bundle').checked ? 1 : 0,
   };
+  // เลิกเป็นชุดรวม = ล้างรายการที่ครอบคลุมทิ้งด้วย
+  body.members = body.is_bundle ? [...swcMembers] : [];
   if (!body.name) { swcSetError('กรุณาระบุชื่อ Software'); return; }
+  if (body.seats !== '' && (!/^\d+$/.test(body.seats))) {
+    swcSetError('จำนวนที่ซื้อต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป'); return;
+  }
+  if (body.is_bundle && !body.members.length) {
+    swcSetError('ชุดรวมต้องเลือกโปรแกรมที่ครอบคลุมอย่างน้อย 1 ตัว'); return;
+  }
 
   const btn = document.getElementById('swc-save-btn');
   btn.disabled = true;
@@ -1502,6 +1613,7 @@ async function saveSwCatalog() {
     cancelSwCatalogEdit();
     await loadSwCatalog();
     syncSwRowsWithCatalog();
+    swDash = swVendor = null;   // ยอดใช้/ชุดรวมเปลี่ยน หน้า dashboard ต้องโหลดใหม่
   } catch (e) {
     swcSetError(e.error || 'บันทึกไม่สำเร็จ');
   } finally {
@@ -1549,6 +1661,74 @@ async function deleteSwCatalog(cid) {
   } catch (e) {
     swcSetError(e.error || 'ลบไม่สำเร็จ');
   }
+}
+
+/** ช่องยอด ใช้ / ซื้อ / เหลือ ของแต่ละรายการในคลัง */
+function swSeatCellHtml(c) {
+  const used = c.used ?? c.holders;
+  const via  = c.covered
+    ? `<div class="s" title="ถือชุดรวมที่มีโปรแกรมนี้อยู่แล้ว ไม่กิน license ของตัวนี้">+${c.covered} คนใช้ผ่านชุดรวม</div>`
+    : '';
+  if (c.seats == null) {
+    return `<div class="swcat-seats" title="ใช้ = จำนวนคนที่ต้องมี license ของตัวนี้">
+      <div class="n">${used || '—'}${used ? ' <small>คนใช้</small>' : ''}</div>
+      ${used ? '<div class="s nos">ยังไม่ระบุจำนวนซื้อ</div>' : ''}${via}</div>`;
+  }
+  const st = c.over > 0 ? `<div class="s over">⚠ ใช้เกิน ${c.over}</div>`
+                        : `<div class="s ok">เหลือ ${c.available}</div>`;
+  return `<div class="swcat-seats" title="ใช้ / ซื้อ">
+    <div class="n">${used} <small>/ ${c.seats} ซื้อ</small></div>${st}${via}</div>`;
+}
+
+/** วันต่ออายุ — แดงถ้าเลยแล้ว ส้มถ้าเหลือไม่ถึง 60 วัน */
+function swRenewHtml(d) {
+  const days = Math.round((new Date(d) - new Date(new Date().toDateString())) / 86400000);
+  const txt  = 'ต่ออายุ ' + _dateFmt(d);
+  if (days < 0)  return `<span style="color:#dc2626;font-weight:600">${txt} (เลยมา ${-days} วัน)</span>`;
+  if (days < 60) return `<span style="color:#b45309;font-weight:600">${txt} (อีก ${days} วัน)</span>`;
+  return txt;
+}
+
+/** ตัวเลือกโปรแกรมที่ชุดรวมครอบคลุม — ตั้งต้นแสดงเฉพาะผู้ผลิตเดียวกัน */
+function renderSwcMembers() {
+  const on   = document.getElementById('swc-bundle').checked;
+  const wrap = document.getElementById('swc-members-wrap');
+  wrap.style.display = on ? '' : 'none';
+  if (!on) return;
+
+  const vendor = document.getElementById('swc-vendor').value.trim().toLowerCase();
+  const cand   = swCatalog.filter(c => !c.is_bundle && c.id !== swCatEditId);
+  const same   = c => vendor && (c.vendor || '').toLowerCase() === vendor;
+  const shown  = (swcMembersAll || !vendor) ? cand
+               : cand.filter(c => same(c) || swcMembers.has(c.id));
+  shown.sort((a, b) => (same(b) - same(a)) || a.name.localeCompare(b.name));
+
+  const hidden = cand.length - shown.length;
+  document.getElementById('swc-members-count').textContent = `(เลือก ${swcMembers.size})`;
+  document.getElementById('swc-members').innerHTML = shown.map(c => `
+      <label class="swc-chip${swcMembers.has(c.id) ? ' on' : ''}">
+        <input type="checkbox" data-id="${c.id}" ${swcMembers.has(c.id) ? 'checked' : ''}
+               onchange="toggleSwcMember(${c.id}, this.checked)">${esc(c.name)}
+      </label>`).join('') +
+    (shown.length ? `<a href="#" class="swc-chip swc-chip-other"
+        onclick="swcSelectAllShown(event)">เลือกทั้งหมดที่แสดง</a>` : '') +
+    (hidden ? `<a href="#" class="swc-chip swc-chip-other"
+        onclick="swcMembersAll=true;renderSwcMembers();return false">
+        + แสดงผู้ผลิตอื่นอีก ${hidden} รายการ</a>` : '') +
+    (!shown.length ? '<span style="font-size:.74rem;color:#94a3b8">ไม่มีโปรแกรมให้เลือก</span>' : '');
+}
+
+function toggleSwcMember(id, on) {
+  if (on) swcMembers.add(id); else swcMembers.delete(id);
+  renderSwcMembers();
+}
+
+function swcSelectAllShown(e) {
+  e.preventDefault();
+  document.querySelectorAll('#swc-members input[data-id]').forEach(cb => {
+    swcMembers.add(parseInt(cb.dataset.id));
+  });
+  renderSwcMembers();
 }
 
 function closeSwCatalog() {
@@ -2064,7 +2244,12 @@ async function applySyncConfirm() {
   btn.textContent = 'กำลัง Sync...';
   try {
     const r = await api('/api/sync/apply', 'POST');
-    showToast(`Sync เสร็จสิ้น · Inactive ${r.inactivated} · เพิ่ม ${r.added} · อัพเดท ${r.updated} คน`, 'success');
+    showToast(`Sync เสร็จสิ้น · Inactive ${r.inactivated} · เพิ่ม ${r.added} · อัพเดท ${r.updated} คน` +
+              (r.software_released ? ` · ถอน Software คืนคลัง ${r.software_released} รายการ` : ''), 'success');
+    if (r.software_released) {
+      swDash = swVendor = null;
+      loadSoftwareEmpMap();
+    }
     closeSyncModal();
     loadEmployees();
     loadStats();
@@ -2501,6 +2686,7 @@ function renderSwDash() {
   document.getElementById('sd-licenses').textContent = s.licenses.toLocaleString();
   document.getElementById('sd-licenses-sub').textContent =
     `${s.catalog_used} รายการที่ต่างกัน` +
+    (s.covered ? ` · ชุดรวมนับ 1 (ไม่นับโปรแกรมในชุดอีก ${s.covered.toLocaleString()})` : '') +
     (s.orphan_licenses ? ` · ${s.orphan_licenses} ใบหาเจ้าของใน HR ไม่เจอ` : '');
 
   document.getElementById('sd-emps').textContent = s.employees_with.toLocaleString();
@@ -2534,7 +2720,8 @@ function renderSwDashTable() {
 
   const cols = bu ? [bu] : swDash.bus.filter(b => all.some(s => s.by_bu[b]));
   const tot  = r => bu ? (r.by_bu[bu] || 0) : r.total;
-  rows = rows.slice().sort((a, b) => tot(b) - tot(a) || a.name.localeCompare(b.name));
+  rows = rows.slice().sort((a, b) => tot(b) - tot(a) || (b.covered || 0) - (a.covered || 0) ||
+                                     a.name.localeCompare(b.name));
   const grand = rows.reduce((n, r) => n + tot(r), 0);
 
   const TH = 'padding:8px 10px;text-align:left;font-size:.74rem;font-weight:700;color:#475569;white-space:nowrap';
@@ -2556,7 +2743,9 @@ function renderSwDashTable() {
           <tr class="sd-row" onclick="toggleSwHolders(${r.id}, this)" title="คลิกดูรายชื่อผู้ถือครอง">
             <td style="${TD};font-weight:600;color:#1e293b">
               <span class="sd-caret">▸</span> ${esc(r.name)}
+              ${r.is_bundle ? '<span class="sw-bundle-tag">ชุดรวม</span>' : ''}
               ${r.is_active === 0 ? '<span class="sw-off">ปิดใช้งานในคลัง</span>' : ''}
+              ${r.covered ? `<span class="sd-covered" title="คนที่ถือชุดรวมอยู่แล้ว ใช้ตัวนี้ได้โดยไม่ต้องซื้อแยก — ไม่นับในตัวเลข">+${r.covered.toLocaleString()} ใช้ในชุดรวม</span>` : ''}
             </td>
             <td style="${TD};color:#64748b">${esc(r.category) || '—'}</td>
             <td style="${TD};color:#64748b">${SW_LICENSE_LABEL[r.license_type] || '—'}</td>
@@ -2597,13 +2786,19 @@ async function toggleSwHolders(cid, rowEl) {
   }
 
   const bu = document.getElementById('sd-bu').value;
-  const shown = bu ? list.filter(h => (h.bu_code || 'ไม่ระบุ BU') === bu) : list;
+  // ซื้อแยกขึ้นก่อน คนที่ใช้ผ่านชุดรวมตามหลัง
+  const shown = (bu ? list.filter(h => (h.bu_code || 'ไม่ระบุ BU') === bu) : list)
+    .slice().sort((a, b) => a.via_bundle - b.via_bundle);
+  const nVia = shown.filter(h => h.via_bundle).length;
   const TD = 'padding:5px 10px;font-size:.78rem;border-bottom:1px solid #f1f5f9';
 
   rowEl.nextElementSibling.querySelector('td').innerHTML = `
     <div class="sd-holders-box">
       <div style="font-size:.72rem;color:#94a3b8;margin-bottom:6px">
-        ผู้ถือครอง ${shown.length.toLocaleString()} คน${bu ? ` (เฉพาะ ${esc(bu)})` : ''}
+        ${nVia
+          ? `ซื้อแยก <b style="color:#7e22ce">${(shown.length - nVia).toLocaleString()}</b> คน ·
+             ใช้ผ่านชุดรวม ${nVia.toLocaleString()} คน (ไม่นับเป็น license)`
+          : `ผู้ถือครอง ${shown.length.toLocaleString()} คน`}${bu ? ` (เฉพาะ ${esc(bu)})` : ''}
       </div>
       <div style="max-height:320px;overflow-y:auto">
         <table style="width:100%;border-collapse:collapse">
@@ -2617,6 +2812,7 @@ async function toggleSwHolders(cid, rowEl) {
                     : '<span style="color:#ef4444">(ไม่พบใน HR)</span>'}
                   ${h.status && h.status !== 'active'
                     ? '<span class="sw-tag del" style="margin-left:6px">Inactive</span>' : ''}
+                  ${h.via_bundle ? '<span class="sw-inbundle-tag">ในชุดรวม</span>' : ''}
                 </td>
                 <td style="${TD};width:70px"><span class="bu-badge bu-${esc(h.bu_code)}">${esc(h.bu_code) || '—'}</span></td>
                 <td style="${TD};color:#64748b">${esc(h.department) || '—'}</td>
@@ -2705,7 +2901,9 @@ function renderSwDashInactive() {
               </td>
               <td style="${TD}"><span class="bu-badge bu-${esc(r.bu_code)}">${esc(r.bu_code) || '—'}</span></td>
               <td style="${TD};color:#64748b">${esc(r.department) || '—'}</td>
-              <td style="${TD}">${esc(r.software)}</td>
+              <td style="${TD}">${esc(r.software)}
+                ${r.covers && r.covers.length
+                  ? `<div style="font-size:.7rem;color:#a78bfa">รวม ${r.covers.length} โปรแกรมในชุด</div>` : ''}</td>
               <td style="${TD};color:#94a3b8;font-size:.76rem">${esc(r.note) || ''}</td>
             </tr>`).join('')}
         </tbody>
@@ -2746,20 +2944,21 @@ function renderSwVendor() {
   const s = v.summary;
   const R = v.rule;
   document.getElementById('sv-summary').innerHTML = `
-    <span><b>${s.licenses.toLocaleString()}</b> license</span>
+    <span title="ชุดรวม All Apps นับเป็น 1 — โปรแกรมที่อยู่ในชุดไม่นับซ้ำ"><b>${s.licenses.toLocaleString()}</b> license</span>
     <span><b>${s.people.toLocaleString()}</b> คน</span>
     <span><b>${s.products}</b> โปรแกรม</span>
     <span><b>${s.bus}</b> BU · <b>${s.depts}</b> ฝ่าย</span>
-    ${R ? `<span class="sv-cc-sum"><span class="sv-cc">✓</span> ควรใช้ ${esc(R.label)}
-             <b>${s.cc.toLocaleString()}</b> คน</span>` : ''}
+    ${R ? `<span class="sv-cc-sum"><span class="sv-cc">✓</span> ${esc(R.label)}
+             <b>${s.cc.toLocaleString()}</b> คน
+             ${v.groups && v.groups.cc_pending
+               ? `<small>(ยังไม่ได้บันทึกชุด ${v.groups.cc_pending})</small>` : ''}</span>` : ''}
     ${v.unused.length ? `<span class="sv-none">ยังไม่มีใครถือ: ${v.unused.map(esc).join(' · ')}</span>` : ''}`;
 
   document.getElementById('sv-products').innerHTML = v.products.map(p =>
     `<span class="sv-prod"><b>${p.total.toLocaleString()}</b> ${esc(p.name)}</span>`).join('') +
     (R ? `<span class="sv-rule-note"><span class="sv-cc">✓</span> =
-            ถือ ${esc(v.vendor)} ตั้งแต่ ${R.min} ตัวขึ้นไป
-            (ไม่นับ ${R.exclude.map(x => esc(x.replace(/^Adobe /, ''))).join(', ')})
-            → คุ้มกว่าถ้าใช้ ${esc(R.label)}</span>` : '');
+            ถือชุด ${esc(R.label)} อยู่ หรือใช้ ${esc(v.vendor)} ตั้งแต่ ${R.min} ตัวขึ้นไป
+            (ไม่นับ ${R.exclude.map(x => esc(x.replace(/^Adobe /, ''))).join(', ')})</span>` : '');
 
   // ค้นหา = กรองคน แล้วเก็บเฉพาะฝ่าย/BU ที่ยังมีคนเหลือ (กางให้เองเพื่อเห็นผลทันที)
   const match = p => !q ||
@@ -2777,6 +2976,8 @@ function renderSwVendor() {
     return { ...b, depts };
   }).filter(b => b.depts.length);
 
+  renderSwGroups();
+
   const el = document.getElementById('sv-tree');
   if (!bus.length) { el.innerHTML = '<div class="sw-empty">ไม่พบคนที่ตรงกับที่ค้นหา</div>'; return; }
 
@@ -2789,7 +2990,7 @@ function renderSwVendor() {
         <span class="sv-caret">${buOpen ? '▾' : '▸'}</span>
         <span class="bu-badge bu-${esc(b.bu_code)}">${esc(b.bu_code)}</span>
         <span class="sv-bu-num"><b>${b.licenses.toLocaleString()}</b> license · ${b.people.toLocaleString()} คน · ${b.depts.length} ฝ่าย
-          ${R && b.cc ? `· <span class="sv-cc">✓</span> <b class="sv-cc-b">${b.cc}</b> คนควรใช้ All Apps` : ''}</span>
+          ${R && b.cc ? `· <span class="sv-cc">✓</span> <b class="sv-cc-b">${b.cc}</b> คนใช้ All Apps` : ''}</span>
         <span class="sv-bu-prods">${Object.entries(b.products)
           .sort((x, y) => y[1] - x[1])
           .map(([n, c]) => `${esc(n.replace(/^Adobe /, ''))} ${c}`).join(' · ')}</span>
@@ -2817,7 +3018,7 @@ function renderSwVendor() {
                   ${prods.map(p => `<th class="sv-rot" title="${esc(p)}">${esc(p.replace(/^Adobe /, ''))}</th>`).join('')}
                   <th>รวม</th>
                   ${R ? `<th class="sv-rot sv-cc-th"
-                          title="ถือ ${esc(v.vendor)} ≥ ${R.min} ตัว (ไม่นับ ${R.exclude.join(', ')}) → ควรใช้ ${esc(R.label)}"
+                          title="ถือชุด ${esc(R.label)} หรือใช้ ${esc(v.vendor)} ≥ ${R.min} ตัว (ไม่นับ ${R.exclude.join(', ')})"
                           >${esc(R.label)}</th>` : ''}
                 </tr>
               </thead>
@@ -2836,12 +3037,16 @@ function renderSwVendor() {
                     ${prods.map(pr => {
                       const it = p.items.find(i => i.product === pr);
                       return `<td class="sv-cell">${it
-                        ? `<span class="sv-on"${it.note ? ` title="${esc(it.note)}"` : ''}>●</span>`
+                        ? `<span class="sv-on${it.in_bundle ? ' sv-in-bundle' : ''}"
+                                 title="${it.in_bundle ? 'ใช้ผ่านชุดรวม — ไม่นับเป็น license แยก' : 'ซื้อแยก'}${it.note ? ' · ' + esc(it.note) : ''}">●</span>`
                         : '<span class="sv-off">·</span>'}</td>`;
                     }).join('')}
-                    <td class="sv-cell"><b>${p.items.length}</b></td>
-                    ${R ? `<td class="sv-cell">${p.cc
-                      ? `<span class="sv-cc" title="ถือ ${p.counted.length} ตัวที่นับ: ${esc(p.counted.map(x => x.replace(/^Adobe /, '')).join(', '))}">✓</span>`
+                    <td class="sv-cell" title="${p.has_bundle
+                        ? `ชุดรวมนับ 1 · ใช้ ${p.items.length} โปรแกรมในชุด` : 'จำนวน license'}"><b>${p.licenses}</b></td>
+                    ${R ? `<td class="sv-cell">${p.has_bundle
+                      ? `<span class="sv-cc" title="ถือชุด ${esc(p.bundles.join(', '))} · ใช้ ${p.counted.length} ตัว">✓</span>`
+                      : p.cc
+                      ? `<span class="sv-cc sv-cc-pending" title="ใช้ ${p.counted.length} ตัว (${esc(p.counted.map(x => x.replace(/^Adobe /, '')).join(', '))}) แต่ยังไม่ได้บันทึกชุด All Apps">✓</span>`
                       : '<span class="sv-off">·</span>'}</td>` : ''}
                   </tr>`).join('')}
               </tbody>
@@ -2850,7 +3055,7 @@ function renderSwVendor() {
                   <td class="sv-sticky">รวม ${d.shown.length.toLocaleString()} คน</td><td></td>
                   ${prods.map(pr => `<td class="sv-cell">${d.shown.filter(p =>
                     p.products.includes(pr)).length}</td>`).join('')}
-                  <td class="sv-cell"><b>${d.shown.reduce((n, p) => n + p.items.length, 0)}</b></td>
+                  <td class="sv-cell"><b>${d.shown.reduce((n, p) => n + p.licenses, 0)}</b></td>
                   ${R ? `<td class="sv-cell sv-cc-b">${d.shown.filter(p => p.cc).length}</td>` : ''}
                 </tr>
               </tfoot>
@@ -2860,6 +3065,107 @@ function renderSwVendor() {
       }).join('')}
     </div>`;
   }).join('');
+}
+
+/** แผนต่ออายุ license — All Apps กี่ชุด และตัวแยกอย่างละกี่ชุด */
+function renderSwGroups() {
+  const panel = document.getElementById('sg-panel');
+  const g = swVendor.groups;
+  if (!g) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  const R       = g.rule;
+  const singles = g.plan.filter(p => p.kind === 'single');
+  const singleQ = singles.reduce((n, p) => n + p.qty, 0);
+  const bundleQ = g.plan[0].qty;
+
+  document.getElementById('sg-title').textContent = swVendor.vendor;
+  document.getElementById('sg-rule-note').textContent =
+    `All Apps = คนที่ถือชุด All Apps อยู่ หรือใช้ตั้งแต่ ${R.min} ตัวขึ้นไป` +
+    (R.exclude.length ? ` (ไม่นับ ${R.exclude.map(x => x.replace(/^Adobe /, '')).join(', ')})` : '');
+
+  // ช่องเทียบกับจำนวนที่ซื้อไว้ในคลัง — ว่าง = ยังไม่ได้ระบุ
+  const seatTd = p => p.seats == null
+    ? '<td class="sg-r"><span class="sv-off" title="ยังไม่ได้ระบุจำนวนที่ซื้อในคลัง">—</span></td><td></td>'
+    : `<td class="sg-r">${p.seats.toLocaleString()}</td>
+       <td class="sg-r">${p.seats - p.qty < 0
+         ? `<b style="color:#dc2626">ขาด ${(p.qty - p.seats).toLocaleString()}</b>`
+         : p.seats - p.qty > 0
+         ? `<span style="color:#15803d">เหลือ ${(p.seats - p.qty).toLocaleString()}</span>`
+         : '<span style="color:#15803d">พอดี</span>'}</td>`;
+
+  // ตารางหลัก = ใบสั่งซื้อ: รายการ + จำนวน
+  document.getElementById('sg-plan').innerHTML = `
+    <table class="sg-table sg-plan-table">
+      <thead><tr>
+        <th>รายการ</th><th class="sg-r">ต้องใช้</th>
+        <th class="sg-r">ซื้อไว้</th><th class="sg-r">ขาด / เหลือ</th><th>ไว้ให้ใคร</th>
+      </tr></thead>
+      <tbody>
+        <tr class="sg-plan-bundle">
+          <td><b>${esc(g.plan[0].catalog_name || g.plan[0].item)}</b></td>
+          <td class="sg-r"><b class="sg-qty">${bundleQ.toLocaleString()}</b></td>
+          ${seatTd(g.plan[0])}
+          <td class="sg-who">${esc(g.plan[0].note)}</td>
+        </tr>
+        ${singles.length ? `<tr class="sg-plan-sep"><td colspan="5">ซื้อแยกเฉพาะตัว — สำหรับ ${g.few.people.toLocaleString()} คนที่ใช้ไม่ถึง ${R.min} ตัว</td></tr>` : ''}
+        ${singles.map(p => `
+          <tr>
+            <td>${esc(p.item)}</td>
+            <td class="sg-r"><b class="sg-qty-s">${p.qty.toLocaleString()}</b></td>
+            ${seatTd(p)}
+            <td class="sg-who">${p.qty.toLocaleString()} คน</td>
+          </tr>`).join('')}
+      </tbody>
+      <tfoot>
+        <tr><td>รวมตัวแยก</td><td class="sg-r">${singleQ.toLocaleString()}</td><td colspan="3"></td></tr>
+        <tr><td><b>รวมทั้งหมด</b></td>
+            <td class="sg-r"><b>${(bundleQ + singleQ).toLocaleString()}</b></td><td colspan="2"></td>
+            <td class="sg-who">${bundleQ} All Apps + ${singleQ} ตัวแยก</td></tr>
+      </tfoot>
+    </table>`;
+
+  const noSeats = g.plan.filter(p => p.seats == null).length;
+  document.getElementById('sg-plan-foot').innerHTML =
+    `บันทึกการใช้โปรแกรมไว้ <b>${g.current_singles.toLocaleString()}</b> รายการ —
+     ต้องมี <b>${bundleQ}</b> All Apps + <b>${singleQ}</b> ตัวแยก
+     (คนที่อยู่ใน All Apps ใช้โปรแกรมข้างในได้เลย ไม่ต้องซื้อแยก ${g.cc.licenses.toLocaleString()} รายการ)` +
+    (noSeats ? `<br><span style="color:#b45309">ยังไม่ได้ระบุจำนวนที่ซื้อ ${noSeats} รายการ —
+       กรอกได้ที่ "จัดการคลัง Software" → ✏️ → จำนวนที่ซื้อ</span>` : '');
+
+  // แยกตาม BU/ฝ่าย — คอลัมน์เท่ากับรายการในแผน
+  const cols = singles.map(p => p.item);
+  const cell = v => v ? v.toLocaleString() : '<span class="sv-off">·</span>';
+  document.getElementById('sg-plan-bu').innerHTML = `
+    <table class="sg-table">
+      <thead><tr>
+        <th>BU / ฝ่าย</th>
+        <th class="sg-r sg-th-bundle">All Apps</th>
+        ${cols.map(c => `<th class="sg-r" title="${esc(c)}">${esc(c.replace(/^Adobe /, ''))}</th>`).join('')}
+        <th class="sg-r">รวม</th>
+      </tr></thead>
+      <tbody>
+        ${g.plan_by_bu.map(b => {
+          const row = (label, o, cls) => {
+            const sum = o.allapps + cols.reduce((n, c) => n + (o.items[c] || 0), 0);
+            return `<tr class="${cls}">
+              <td>${label}</td>
+              <td class="sg-r sg-cell-bundle">${cell(o.allapps)}</td>
+              ${cols.map(c => `<td class="sg-r">${cell(o.items[c] || 0)}</td>`).join('')}
+              <td class="sg-r"><b>${sum.toLocaleString()}</b></td>
+            </tr>`;
+          };
+          return row(`<span class="bu-badge bu-${esc(b.bu_code)}">${esc(b.bu_code)}</span>`, b, 'sg-bu-row') +
+            b.depts.map(d => row(`<span class="sg-dept">${esc(d.department)}</span>`, d, '')).join('');
+        }).join('')}
+      </tbody>
+      <tfoot><tr>
+        <td>รวมทุก BU</td>
+        <td class="sg-r sg-cell-bundle">${bundleQ.toLocaleString()}</td>
+        ${cols.map(c => `<td class="sg-r">${(singles.find(p => p.item === c) || {}).qty.toLocaleString()}</td>`).join('')}
+        <td class="sg-r"><b>${(bundleQ + singleQ).toLocaleString()}</b></td>
+      </tr></tfoot>
+    </table>`;
 }
 
 function toggleSv(key) {

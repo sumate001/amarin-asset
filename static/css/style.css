@@ -913,6 +913,67 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   min-width: 52px; text-align: right;
 }
 
+.swcat-form-grid .swcat-active { display: flex; white-space: normal; line-height: 1.3; }
+.swcat-form-grid .swcat-active input { width: auto; padding: 0; flex: none; }
+
+/* ชุดรวม: เลือกโปรแกรมที่ครอบคลุม */
+.swc-members-wrap {
+  background: #fff; border: 1px solid #e9d5ff; border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.swc-members-head { font-size: .74rem; font-weight: 700; color: #7e22ce; margin-bottom: 7px; }
+.swc-members-hint { font-weight: 400; color: #94a3b8; }
+.swc-members { display: flex; flex-wrap: wrap; gap: 6px; }
+.swc-chip {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  border: 1px solid #e2e8f0; border-radius: 14px; padding: 3px 10px 3px 7px;
+  font-size: .74rem; color: #475569; background: #f8fafc; user-select: none;
+}
+.swc-chip input { accent-color: #7e22ce; margin: 0; }
+.swc-chip.on { background: #f3e8ff; border-color: #d8b4fe; color: #6b21a8; font-weight: 600; }
+.swc-chip-other { color: #94a3b8; }
+
+/* ยอดซื้อ / ใช้ / เหลือ ในแถวคลัง */
+.swcat-seats { text-align: right; white-space: nowrap; min-width: 120px; }
+.swcat-seats .n { font-size: .8rem; font-weight: 700; color: #1e293b; }
+.swcat-seats .n small { font-weight: 500; color: #94a3b8; }
+.swcat-seats .s { font-size: .68rem; color: #94a3b8; margin-top: 1px; }
+.swcat-seats .s.ok   { color: #15803d; }
+.swcat-seats .s.over { color: #dc2626; font-weight: 700; }
+.swcat-seats .s.nos  { color: #b45309; }
+.swcat-row.over { background: #fef2f2; }
+.sw-bundle-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 4px;
+  background: #7e22ce; color: #fff; font-size: .64rem; font-weight: 700; vertical-align: 1px;
+}
+.sw-inbundle-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+  background: #ecfdf5; color: #047857; font-size: .64rem; font-weight: 700;
+}
+.sw-covers { font-size: .7rem; color: #7e22ce; margin-top: 3px; line-height: 1.45; }
+
+/* ชุดรวม (All Apps) เป็นรายการหลัก — โปรแกรมข้างในเป็นรายการย่อยเยื้องเข้าไป */
+.sw-group { margin-bottom: 8px; }
+.sw-group > .sw-item.sw-bundle-main {
+  background: #faf5ff; border-color: #e9d5ff; margin-bottom: 0;
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+}
+.sw-group > .sw-item.sw-bundle-main .sw-item-name { color: #6b21a8; }
+.sw-children {
+  margin-left: 18px; padding: 6px 0 2px 12px;
+  border-left: 2px solid #e9d5ff;
+}
+.sw-item.sw-child { padding: 6px 10px; margin-bottom: 4px; }
+.sw-item.sw-child .sw-item-name { font-size: .8rem; font-weight: 500; }
+.sw-item.sw-child .sw-item-name::before { content: '└ '; color: #c4b5fd; }
+.sw-item.sw-child .sw-item-meta { font-size: .7rem; }
+.sw-item.sw-child .sw-note-input { font-size: .76rem; }
+.sw-child-empty, .sw-covers-more {
+  font-size: .7rem; color: #a78bfa; padding: 2px 10px 4px;
+}
+.swcat-sum { font-size: .74rem; color: #64748b; white-space: nowrap; }
+.swcat-sum b.over { color: #dc2626; }
+
 @media (max-width: 760px) {
   .swcat-form-grid { grid-template-columns: 1fr 1fr; }
   .swcat-form-row { flex-wrap: wrap; }
@@ -1073,6 +1134,13 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 
 /* ---- เกณฑ์ All Apps: เครื่องหมายถูกสีแดง ---- */
 .sv-cc { color: #dc2626; font-weight: 800; cursor: help; }
+/* โปรแกรมที่ใช้ผ่านชุดรวม — ไม่นับเป็น license แยก */
+.sv-on.sv-in-bundle { color: #c4b5fd; }
+.sd-covered {
+  margin-left: 6px; font-size: .68rem; font-weight: 600; color: #a78bfa; white-space: nowrap;
+}
+/* ใช้ถึงเกณฑ์แต่ยังไม่ได้บันทึกชุด All Apps — ติ๊กจาง ๆ */
+.sv-cc-pending { opacity: .45; }
 .sv-cc-b { color: #dc2626; font-weight: 800; font-variant-numeric: tabular-nums; }
 .sv-cc-sum {
   display: inline-flex; align-items: center; gap: 5px;
@@ -1098,3 +1166,36 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
   font-size: .76rem; color: #64748b;
 }
 .ad-notice .btn-sm { flex-shrink: 0; }
+
+/* ---- ตารางแผนต่ออายุ license ---- */
+.sg-h4 { font-size: .8rem; font-weight: 700; color: #475569; margin: 0 0 8px; }
+.sg-table { width: 100%; border-collapse: collapse; font-size: .78rem; background: #fff; }
+.sg-table th {
+  background: #f8fafc; padding: 6px 9px; text-align: left; white-space: nowrap;
+  font-size: .72rem; font-weight: 700; color: #475569; border-bottom: 2px solid #e2e8f0;
+  position: sticky; top: 0; z-index: 1;
+}
+.sg-table td { padding: 5px 9px; border-bottom: 1px solid #f8fafc; color: #334155; }
+.sg-table .sg-r { text-align: right; font-variant-numeric: tabular-nums; }
+.sg-table tbody tr:hover td { background: #fcfaff; }
+.sg-table tr.sg-bu-row td { background: #faf5ff; font-weight: 700; }
+.sg-table tr.sg-bu-row:hover td { background: #f3e8ff; }
+.sg-table .sg-dept { padding-left: 22px; color: #64748b; }
+.sg-table tfoot td {
+  background: #f8fafc; border-top: 2px solid #e2e8f0; font-weight: 700; color: #475569;
+}
+
+/* แผนต่ออายุ: เน้นตัวเลขจำนวน license */
+.sg-plan-table td { padding: 7px 10px; }
+.sg-plan-bundle td { background: #fef2f2; border-bottom: 1px solid #fecaca; }
+.sg-qty   { font-size: 1.15rem; color: #dc2626; }
+.sg-qty-s { font-size: 1rem; color: #1e293b; }
+.sg-who   { font-size: .72rem; color: #94a3b8; white-space: nowrap; }
+.sg-plan-sep {
+  font-size: .72rem; color: #64748b; background: #f8fafc;
+}
+.sg-plan-sep td { padding: 5px 10px; }
+.sg-th-bundle, .sg-cell-bundle { background: #fef2f2; }
+.sg-cell-bundle { color: #dc2626; font-weight: 700; }
+.sg-table tr.sg-bu-row td.sg-cell-bundle { background: #fee2e2; }
+.sg-note b { color: #1e293b; }
