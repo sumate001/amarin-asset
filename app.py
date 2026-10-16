@@ -3366,6 +3366,263 @@ def software_export():
                      as_attachment=True, download_name=fname)
 
 
+# ---------- Presentation สำหรับผู้บริหาร (Software) ----------
+
+def _call_json(view, url):
+    """เรียก view เดิมในโปรเซสเดียวกัน เพื่อใช้ตัวเลขชุดเดียวกับหน้าจอ"""
+    with app.test_request_context(url):
+        return view().get_json()
+
+
+def _software_deck_data(bu):
+    dash = _call_json(dashboard_software, '/api/dashboard/software')
+    ven  = _call_json(dashboard_software_vendor, '/api/dashboard/software/vendor?name=Adobe')
+    cat  = _call_json(software_catalog_list,
+                      '/api/software/catalog' + (f'?bu={_url_quote(bu)}' if bu else ''))
+    seats = {c['name']: c for c in cat}
+
+    # Software ที่ใช้ (ชุดรวมนับ 1) — กรอง BU ใช้ยอดของ BU นั้น
+    sw = []
+    for x in dash['by_software']:
+        used = x['by_bu'].get(bu, 0) if bu else x['total']
+        if used:
+            c = seats.get(x['name'], {})
+            sw.append({'name': x['name'], 'used': used, 'seats': c.get('seats')})
+    sw.sort(key=lambda t: (-t['used'], t['name'].lower()))
+
+    if bu:
+        b = next((r for r in dash['by_bu'] if r['bu_code'] == bu), None) or {}
+        emps, emp_total = b.get('employees', 0), b.get('emp_total')
+    else:
+        emps, emp_total = dash['summary']['employees_with'], dash['summary']['employees_active']
+    over = [t for t in sw if t['seats'] is not None and t['used'] > t['seats']]
+    known = [t for t in sw if t['seats'] is not None]
+
+    # Adobe: All Apps + ตัวแยก (ยอดของ BU ที่เลือก หรือรวม)
+    adobe = None
+    g = ven.get('groups')
+    if g:
+        if bu:
+            pb = next((r for r in g['plan_by_bu'] if r['bu_code'] == bu), None)
+            allapps = pb['allapps'] if pb else 0
+            need = dict(pb['items']) if pb else {}
+        else:
+            allapps = g['plan'][0]['qty']
+            need = {p['item']: p['qty'] for p in g['plan'][1:]}
+        bundle = next((c for c in cat if c.get('is_bundle') and (c.get('vendor') or '') == 'Adobe'), None)
+        for c in cat:   # ตัวที่ซื้อไว้แต่ไม่มีใครต้องใช้แยก ก็ต้องโชว์ ยอดซื้อจะได้ครบ
+            if (c.get('vendor') == 'Adobe' and not c.get('is_bundle') and c.get('seats')
+                    and c['name'] not in need):
+                need[c['name']] = 0
+        singles = [{'item': n, 'qty': q, 'seats': (seats.get(n) or {}).get('seats')}
+                   for n, q in sorted(need.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
+        adobe = {'allapps': allapps, 'allapps_seats': bundle.get('seats') if bundle else None,
+                 'singles': singles, 'min': g['rule']['min']}
+
+    # BU ทั้งหมด + All Apps ต่อ BU (เฉพาะรายงานรวม)
+    by_bu = []
+    if not bu:
+        aa = {r['bu_code']: r['allapps'] for r in (g['plan_by_bu'] if g else [])}
+        by_bu = [{**r, 'allapps': aa.get(r['bu_code'], 0)} for r in dash['by_bu']
+                 if r['bu_code'] != 'ไม่ระบุ BU']
+
+    # สิ่งที่ต้องดำเนินการ
+    today = date.today()
+    actions = []
+    if over:
+        actions.append(('!', f'ใช้เกินจำนวนซื้อ {len(over)} รายการ',
+                        ' · '.join(f'{t["name"]} เกิน {t["used"] - t["seats"]}' for t in over[:4]) +
+                        ' — ซื้อเพิ่ม หรือเรียกคืนจากคนที่ไม่ได้ใช้'))
+    soon = sorted([c for c in cat if c.get('renew_date') and
+                   0 <= (date.fromisoformat(c['renew_date']) - today).days <= 90],
+                  key=lambda c: c['renew_date'])
+    if soon:
+        from report_pptx import th_date
+        actions.append(('⏰', f'ต่ออายุภายใน 90 วัน {len(soon)} รายการ',
+                        ' · '.join(f'{c["name"]} ({th_date(c["renew_date"])})' for c in soon[:4])))
+    if adobe:
+        lack = [x for x in [{'item': 'All Apps', 'qty': adobe['allapps'],
+                             'seats': adobe['allapps_seats']}] + adobe['singles']
+                if x['seats'] is not None and x['qty'] > x['seats']]
+        if lack:
+            actions.append(('A', 'Adobe ต้องซื้อเพิ่ม',
+                            ' · '.join(f'{x["item"].replace("Adobe ", "")} ขาด {x["qty"] - x["seats"]}'
+                                       for x in lack[:4])))
+    no_seat = [t['name'] for t in sw if t['seats'] is None]
+    if no_seat:
+        actions.append(('?', f'ยังไม่ระบุจำนวนซื้อ {len(no_seat)} รายการ',
+                        'กรอกในคลัง Software เพื่อให้เทียบใช้/ซื้อได้ครบ เช่น ' +
+                        ', '.join(no_seat[:4])))
+
+    highlights = [f'ใช้งาน {sum(t["used"] for t in sw):,} license จาก {len(sw)} รายการ '
+                  f'โดยพนักงาน {emps:,} คน']
+    if adobe:
+        hi = f'Adobe: All Apps {adobe["allapps"]:,} ชุด + ซื้อแยก {sum(x["qty"] for x in adobe["singles"]):,} license'
+        highlights.append(hi)
+    highlights.append(f'ใช้เกินจำนวนซื้อ {len(over)} รายการ' if over else
+                      'ไม่มี Software ที่ใช้เกินจำนวนที่ซื้อ')
+
+    return {
+        'scope': bu or 'ทุก BU', 'today': today,
+        'kpi': {'licenses': sum(t['used'] for t in sw), 'products': len(sw),
+                'employees': emps, 'emp_active': emp_total,
+                'seats_total': sum(t['seats'] for t in known) if known else None,
+                'seats_known': len(known), 'over': len(over)},
+        'top': sw, 'adobe': adobe, 'by_bu': by_bu, 'actions': actions,
+        'highlights': highlights,
+    }
+
+
+@app.route('/api/software/presentation', methods=['GET'])
+def software_presentation():
+    """Presentation (.pptx) สรุปบริหาร Software สำหรับผู้บริหาร · ?bu=AMTV เฉพาะ BU"""
+    from report_pptx import build_software_deck
+    bu  = (request.args.get('bu') or '').strip()
+    buf = build_software_deck(_software_deck_data(bu))
+    fname = f"software_presentation_{bu or 'all'}_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx"
+    return send_file(buf, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+
+
+def _vendor_deck_data(vendor, bu):
+    """ข้อมูลสำหรับ Presentation รายผู้ผลิต — ตัวเลขชุดเดียวกับ "ไล่ดูรายคน" และแผนต่ออายุ"""
+    ven = _call_json(dashboard_software_vendor,
+                     f'/api/dashboard/software/vendor?name={_url_quote(vendor)}')
+    cat = _call_json(software_catalog_list,
+                     '/api/software/catalog' + (f'?bu={_url_quote(bu)}' if bu else ''))
+    vendor = ven['vendor']
+    vcat = [c for c in cat if _vendor_of(c).lower() == vendor.lower()]
+    seats = {c['name']: c.get('seats') for c in vcat}
+
+    bus = [b for b in ven['by_bu'] if not bu or b['bu_code'] == bu]
+    g = ven.get('groups')
+    pbu = {r['bu_code']: r for r in (g['plan_by_bu'] if g else [])}
+
+    usage = Counter()
+    for b in bus:
+        usage.update(b['products'])
+    people = [p for b in bus for d in b['depts'] for p in d['people_list']]
+
+    # ตัวแยกที่ต้องซื้อในขอบเขตนี้
+    singles = Counter()
+    allapps = 0
+    for b in bus:
+        r = pbu.get(b['bu_code'])
+        if r:
+            allapps += r['allapps']
+            singles.update(r['items'])
+
+    products = sorted([{'name': n, 'total': t, 'single': singles.get(n, 0)}
+                       for n, t in usage.items()], key=lambda x: (-x['total'], x['name'].lower()))
+
+    # รายฝ่าย
+    depts = []
+    for b in bus:
+        pd = {x['department']: x for x in (pbu.get(b['bu_code']) or {}).get('depts', [])}
+        for dd in b['depts']:
+            pr = pd.get(dd['department'], {})
+            depts.append({'bu_code': b['bu_code'], 'department': dd['department'],
+                          'people': dd['people'], 'licenses': dd['licenses'],
+                          'allapps': pr.get('allapps', 0),
+                          'singles': sum((pr.get('items') or {}).values())})
+    depts.sort(key=lambda x: (-x['people'], x['department'].lower()))
+
+    plan = None
+    if g:
+        bundle = next((c for c in vcat if c.get('is_bundle')), None)
+        need = dict(singles)
+        for c in vcat:   # ซื้อไว้แต่ไม่มีใครต้องใช้แยก — โชว์ให้ยอดซื้อครบ
+            if not c.get('is_bundle') and c.get('seats') and c['name'] not in need:
+                need[c['name']] = 0
+        items = [{'item': bundle['name'] if bundle else g['rule']['label'], 'qty': allapps,
+                  'seats': bundle.get('seats') if bundle else None,
+                  'who': f'{allapps:,} คนที่ใช้ All Apps' if allapps else 'ไม่มีคนใช้'}]
+        items += [{'item': n, 'qty': q, 'seats': seats.get(n),
+                   'who': f'{q:,} คน' if q else 'ไม่มีคนต้องใช้แยก'}
+                  for n, q in sorted(need.items(), key=lambda kv: (-kv[1], kv[0].lower()))]
+        counted = [it for it in items if it['qty'] or it['seats'] is not None]
+        known = [it['seats'] for it in counted if it['seats'] is not None]
+        plan = {'min': g['rule']['min'], 'allapps': allapps, 'items': items,
+                'single_total': sum(singles.values()),
+                'few_people': sum(1 for p in people if not p.get('cc')),
+                'need_total': sum(it['qty'] for it in items),
+                'seats_total': sum(known) if known else None,
+                'seats_known': len(known), 'items_n': len(counted),
+                'seats_complete': bool(counted) and len(known) == len(counted)}
+
+    # สิ่งที่ต้องดำเนินการ
+    from report_pptx import th_date
+    today, actions = date.today(), []
+    if plan:
+        lack = [it for it in plan['items'] if it['seats'] is not None and it['qty'] > it['seats']]
+        if lack:
+            actions.append(('', f'ซื้อเพิ่ม {len(lack)} รายการ',
+                            ' · '.join(f'{it["item"].replace(vendor + " ", "")} ขาด {it["qty"] - it["seats"]:,}'
+                                       for it in lack[:4])))
+        spare = [it for it in plan['items'] if it['seats'] is not None and it['seats'] > it['qty']]
+        if spare:
+            n_sp = sum(it['seats'] - it['qty'] for it in spare)
+            actions.append(('', f'License ว่าง {n_sp:,} ใบ',
+                            ' · '.join(f'{it["item"].replace(vendor + " ", "")} {it["seats"] - it["qty"]:,}'
+                                       for it in spare[:4]) +
+                            ' — แจกให้คนที่รอ หรือลดจำนวนตอนต่ออายุ'))
+        pending = sum(1 for p in people if p.get('cc_pending'))
+        if pending:
+            actions.append(('', f'ควรย้ายไป All Apps {pending:,} คน',
+                            f'ใช้ตั้งแต่ {plan["min"]} โปรแกรมแต่ยังไม่ได้บันทึกชุด All Apps — '
+                            f'ถ้าย้ายจะลดการซื้อแยก'))
+    soon = sorted([c for c in vcat if c.get('renew_date') and
+                   0 <= (date.fromisoformat(c['renew_date']) - today).days <= 90],
+                  key=lambda c: c['renew_date'])
+    if soon:
+        actions.append(('', f'ต่ออายุภายใน 90 วัน {len(soon)} รายการ',
+                        ' · '.join(f'{c["name"].replace(vendor + " ", "")} ({th_date(c["renew_date"])})'
+                                   for c in soon[:4])))
+    if plan and not plan['seats_complete']:
+        miss = [it['item'].replace(vendor + ' ', '') for it in plan['items']
+                if it['seats'] is None and it['qty']]
+        if miss:
+            actions.append(('', f'ยังไม่ระบุจำนวนซื้อ {len(miss)} รายการ',
+                            'กรอกในคลัง Software (แท็บ BU) — ' + ', '.join(miss[:4])))
+
+    highlights = [f'คนใช้ {vendor} {len(people):,} คน ใน {len(depts)} ฝ่าย '
+                  f'ใช้ {len(products)} โปรแกรม']
+    if plan:
+        highlights.append(f'ต้องมี All Apps {allapps:,} ชุด + ซื้อแยก {plan["single_total"]:,} license '
+                          f'(รวม {plan["need_total"]:,})')
+        if plan['seats_complete']:
+            gap = plan['seats_total'] - plan['need_total']
+            highlights.append(f'ซื้อไว้ {plan["seats_total"]:,} — ' +
+                              (f'เหลือ {gap:,}' if gap > 0 else f'ขาด {-gap:,}' if gap < 0 else 'พอดี'))
+    if depts:
+        highlights.append(f'ฝ่ายที่ใช้มากที่สุด: {depts[0]["department"]} ({depts[0]["people"]:,} คน)')
+
+    return {'vendor': vendor, 'scope': bu or 'ทุก BU', 'today': today,
+            'kpi': {'people': len(people), 'depts': len(depts), 'products': len(products),
+                    'licenses': sum(x['licenses'] for x in depts),
+                    # ผู้ผลิตที่ไม่มีชุดรวม: เทียบใช้กับซื้อรายโปรแกรม
+                    'seats': sum(seats[p['name']] for p in products if seats.get(p['name']) is not None)
+                             if any(seats.get(p['name']) is not None for p in products) else None,
+                    'seats_known': sum(1 for p in products if seats.get(p['name']) is not None),
+                    'over': sum(1 for p in products if seats.get(p['name']) is not None
+                                and p['total'] > seats[p['name']])},
+            'products': products, 'plan': plan, 'depts': depts,
+            'actions': actions, 'highlights': highlights}
+
+
+@app.route('/api/software/vendor-presentation', methods=['GET'])
+def vendor_presentation():
+    """Presentation (.pptx) รายผู้ผลิต · ?name=Adobe&bu=AMTV"""
+    from report_pptx import build_vendor_deck
+    vendor = (request.args.get('name') or 'Adobe').strip()
+    bu     = (request.args.get('bu') or '').strip()
+    buf = build_vendor_deck(_vendor_deck_data(vendor, bu))
+    safe = re.sub(r'[^A-Za-z0-9_-]+', '_', vendor)
+    fname = f"{safe}_presentation_{bu or 'all'}_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx"
+    return send_file(buf, as_attachment=True, download_name=fname,
+                     mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation')
+
+
 # ---------- บริหาร Printer ----------
 
 PRINTER_FIELDS = ['brand', 'model', 'building', 'serial_no', 'ink_type', 'ppm',

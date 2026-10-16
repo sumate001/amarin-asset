@@ -3256,6 +3256,20 @@ function exportSwVendor(btn) {
                 'software_vendor.xlsx');
 }
 
+function exportSwVendorDeck(btn) {
+  const bu = document.getElementById('sv-export-bu').value;
+  _downloadXlsx(btn, '/api/software/vendor-presentation?name=' + encodeURIComponent(swVendor.vendor) +
+                     (bu ? '&bu=' + encodeURIComponent(bu) : ''),
+                'vendor_presentation.pptx');
+}
+
+function exportSoftwareDeck(btn) {
+  const bu = document.getElementById('sd-bu').value;
+  _downloadXlsx(btn, '/api/software/presentation' +
+                     (bu && bu !== 'ไม่ระบุ BU' ? '?bu=' + encodeURIComponent(bu) : ''),
+                'software_presentation.pptx');
+}
+
 function exportSoftware(btn) {
   const bu = document.getElementById('sd-bu').value;
   _downloadXlsx(btn, '/api/software/export' + (bu ? '?bu=' + encodeURIComponent(bu) : ''),

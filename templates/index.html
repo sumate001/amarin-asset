@@ -984,6 +984,8 @@
           <input id="sd-search" type="text" placeholder="ค้นหา Software / หมวด..." oninput="renderSwDashTable()">
           <select id="sd-bu" onchange="renderSwDashTable()"><option value="">ทุก BU</option></select>
           <button class="btn btn-secondary btn-sm" onclick="exportSoftware(this)">⬇ Export Excel</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportSoftwareDeck(this)"
+                  title="สไลด์สรุปสำหรับผู้บริหาร — ใช้ BU ที่เลือกไว้">📊 Presentation</button>
           <button class="btn btn-secondary btn-sm" onclick="loadSoftwareDashboard(true)">↻ Refresh</button>
         </div>
       </div>
@@ -1002,6 +1004,8 @@
           <button class="btn btn-secondary btn-sm" onclick="expandSwVendor(false)">พับทั้งหมด</button>
           <select id="sv-export-bu" title="เลือก BU ที่จะ Export"><option value="">Export ทุก BU</option></select>
           <button class="btn btn-secondary btn-sm" onclick="exportSwVendor(this)">⬇ Export Excel</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportSwVendorDeck(this)"
+                  title="สไลด์สรุปสำหรับผู้บริหาร — ใช้ BU ที่เลือกไว้">📊 Presentation</button>
         </div>
       </div>
       <div id="sv-summary" class="sv-summary"></div>
