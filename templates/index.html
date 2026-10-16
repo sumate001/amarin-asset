@@ -37,7 +37,7 @@
     <div class="toolbar-left">
       <div class="search-wrap">
         <svg class="search-icon" viewBox="0 0 20 20"><circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.8" fill="none"/><line x1="12" y1="12" x2="17" y2="17" stroke="currentColor" stroke-width="1.8"/></svg>
-        <input id="search" type="text" placeholder="ค้นหาชื่อ, ชื่อเล่น, ตำแหน่ง...">
+        <input id="search" type="text" placeholder="ค้นหาชื่อ, ชื่อเล่น, ตำแหน่ง, email...">
         <button id="clear-search" class="clear-btn" style="display:none">✕</button>
       </div>
       <select id="filter-bu"><option value="">ทุก BU</option></select>
@@ -581,6 +581,9 @@
       <button class="modal-close" onclick="closeSwCatalog()">✕</button>
     </div>
     <div class="modal-body">
+      <!-- แท็บ BU: รายชื่อ Software ชุดเดียวกัน แต่จำนวนซื้อ/วันต่ออายุ/ราคา แยกของแต่ละ BU -->
+      <div id="swc-bu-tabs" class="swc-bu-tabs"></div>
+      <div id="swc-bu-note" class="swc-bu-note"></div>
       <!-- ฟอร์มเพิ่ม/แก้ไข -->
       <div class="swcat-form">
         <div class="swcat-form-grid">
@@ -672,6 +675,7 @@
     <button class="dash-subtab"        data-subtab="rental"   onclick="switchDashTab('rental')">📋 บริหารสัญญาเช่า</button>
     <button class="dash-subtab"        data-subtab="machine"  onclick="switchDashTab('machine')">⚠️ บริหารเครื่อง</button>
     <button class="dash-subtab"        data-subtab="software" onclick="switchDashTab('software')">🧩 บริหาร Software</button>
+    <button class="dash-subtab"        data-subtab="printer"  onclick="switchDashTab('printer')">🖨️ บริหาร Printer</button>
   </div>
 
   <!-- ========== Tab 1: พนักงาน ========== -->
@@ -996,6 +1000,7 @@
           <input id="sv-search" type="text" placeholder="ค้นหาชื่อคน / ฝ่าย / ตำแหน่ง..." oninput="renderSwVendor()">
           <button class="btn btn-secondary btn-sm" onclick="expandSwVendor(true)">กางทั้งหมด</button>
           <button class="btn btn-secondary btn-sm" onclick="expandSwVendor(false)">พับทั้งหมด</button>
+          <select id="sv-export-bu" title="เลือก BU ที่จะ Export"><option value="">Export ทุก BU</option></select>
           <button class="btn btn-secondary btn-sm" onclick="exportSwVendor(this)">⬇ Export Excel</button>
         </div>
       </div>
@@ -1052,6 +1057,57 @@
 
   </div><!-- end dash-pane-software -->
 
+  <!-- ========== Tab 5: บริหาร Printer ========== -->
+  <div id="dash-pane-printer" class="dash-pane" style="display:none">
+
+    <!-- KPI -->
+    <div class="dash-grid" style="grid-template-columns:repeat(4,1fr)">
+      <div class="stat-card">
+        <div class="stat-label">🖨️ เครื่องทั้งหมด</div>
+        <div class="stat-value" id="pr-total">—</div>
+        <div class="stat-sub" id="pr-total-sub" style="font-size:.68rem;color:#94a3b8;margin-top:4px"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">⏳ อายุการใช้งานเฉลี่ย</div>
+        <div class="stat-value" id="pr-age">—</div>
+        <div class="stat-sub" id="pr-age-sub" style="font-size:.68rem;color:#94a3b8;margin-top:4px"></div>
+      </div>
+      <div class="stat-card clickable" onclick="setPrinterStatusFilter('due')">
+        <div class="stat-label">📄 สัญญาหมด / ใกล้หมด</div>
+        <div class="stat-value" style="color:#b45309" id="pr-contract">—</div>
+        <div class="stat-sub" id="pr-contract-sub" style="font-size:.68rem;color:#92400e;margin-top:4px"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">💰 ค่าสำเนาเปลี่ยนเฉลี่ย</div>
+        <div class="stat-value" id="pr-change">—</div>
+        <div class="stat-sub" id="pr-change-sub" style="font-size:.68rem;color:#94a3b8;margin-top:4px"></div>
+      </div>
+    </div>
+
+    <div class="dash-panel" style="margin-bottom:16px">
+      <div class="sd-head">
+        <h3 style="margin:0">รายการ Printer / เครื่องถ่ายเอกสาร</h3>
+        <div class="sd-head-tools">
+          <input id="pr-search" type="text" placeholder="ค้นหา ยี่ห้อ / รุ่น / เลขเครื่อง..." oninput="renderPrinters()">
+          <select id="pr-building" onchange="renderPrinters()"><option value="">ทุกอาคาร</option></select>
+          <select id="pr-brand" onchange="renderPrinters()"><option value="">ทุกยี่ห้อ</option></select>
+          <select id="pr-status" onchange="renderPrinters()">
+            <option value="">ทุกสถานะสัญญา</option>
+            <option value="due">หมด / ใกล้หมด</option>
+            <option value="expired">หมดสัญญาแล้ว</option>
+            <option value="soon">ใกล้หมดสัญญา</option>
+            <option value="active">อยู่ในสัญญา</option>
+            <option value="none">ไม่ระบุสัญญา</option>
+          </select>
+          <button class="btn btn-primary btn-sm pr-add-btn" onclick="openPrinterForm()">＋ เพิ่มเครื่อง</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportPrinters(this)">⬇ Export Excel</button>
+        </div>
+      </div>
+      <div id="pr-buildings" class="pr-buildings"></div>
+      <div id="pr-table-wrap" style="overflow-x:auto"></div>
+    </div>
+  </div><!-- end dash-pane-printer -->
+
 </div>
 
 <!-- ======= MACHINE SPEC TAB (กำหนดคุณสมบัติเครื่องคอมพิวเตอร์) ======= -->
@@ -1088,6 +1144,89 @@
     <div class="empty-state"><div class="empty-icon">⏳</div>กำลังโหลด...</div>
   </div>
 
+</div>
+
+<!-- ======= MODAL: Printer ======= -->
+<div id="printer-overlay" class="modal-overlay" onclick="if(event.target===this)closePrinterForm()">
+  <div class="modal" style="width:760px;max-width:96vw">
+    <div class="modal-header">
+      <h2 id="pr-form-title">เพิ่มเครื่อง Printer</h2>
+      <button class="modal-close" onclick="closePrinterForm()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid pr-form-grid">
+        <div class="form-group">
+          <label>ยี่ห้อเครื่อง</label>
+          <input id="pf-brand" type="text" list="pf-brand-list" placeholder="เช่น Fuji Xerox, Canon, Ricoh">
+          <datalist id="pf-brand-list"></datalist>
+        </div>
+        <div class="form-group">
+          <label>รุ่น</label>
+          <input id="pf-model" type="text" placeholder="เช่น ApeosPort C3070">
+        </div>
+        <div class="form-group">
+          <label>อาคารที่ตั้ง</label>
+          <input id="pf-building" type="text" list="pf-building-list" placeholder="เช่น อาคาร A ชั้น 3">
+          <datalist id="pf-building-list"></datalist>
+        </div>
+        <div class="form-group">
+          <label>เลขเครื่อง</label>
+          <input id="pf-serial" type="text" placeholder="Serial No.">
+        </div>
+        <div class="form-group">
+          <label>ชนิดหมึก</label>
+          <input id="pf-ink" type="text" list="pf-ink-list" placeholder="เช่น Toner ขาวดำ, Toner สี">
+          <datalist id="pf-ink-list"></datalist>
+        </div>
+        <div class="form-group">
+          <label>จำนวนสำเนา/นาที</label>
+          <input id="pf-ppm" type="number" min="0" step="1" placeholder="เช่น 30">
+        </div>
+        <div class="form-group">
+          <label>ปีที่ซื้อ <span class="pf-hint">(พ.ศ. หรือ ค.ศ.)</span></label>
+          <input id="pf-year" type="number" min="1980" step="1" placeholder="เช่น 2565" oninput="updatePrinterPreview()">
+        </div>
+        <div class="form-group">
+          <label>อายุการใช้งาน <span class="pf-hint">(คำนวณจากปีที่ซื้อ)</span></label>
+          <div class="pf-calc" id="pf-age">—</div>
+        </div>
+        <div class="form-group full-width">
+          <label>กระดาษที่ใช้</label>
+          <input id="pf-paper" type="text" list="pf-paper-list" placeholder="เช่น A4, A3">
+          <datalist id="pf-paper-list"></datalist>
+        </div>
+        <div class="form-group">
+          <label>ค่าสำเนาเอกสาร ราคาเดิม <span class="pf-hint">(บาท/แผ่น)</span></label>
+          <input id="pf-price-old" type="number" min="0" step="0.0001" placeholder="0.00" oninput="updatePrinterPreview()">
+        </div>
+        <div class="form-group">
+          <label>ค่าสำเนาเอกสาร ราคาใหม่ <span class="pf-hint">(บาท/แผ่น)</span></label>
+          <input id="pf-price-new" type="number" min="0" step="0.0001" placeholder="0.00" oninput="updatePrinterPreview()">
+        </div>
+        <div class="form-group full-width">
+          <label>ราคาเพิ่มขึ้น / ลดลง <span class="pf-hint">(คำนวณจากราคาเดิม → ราคาใหม่)</span></label>
+          <div class="pf-calc" id="pf-change">—</div>
+        </div>
+        <div class="form-group">
+          <label>สัญญาเริ่มต้น</label>
+          <input id="pf-start" type="date">
+        </div>
+        <div class="form-group">
+          <label>สัญญาสิ้นสุด</label>
+          <input id="pf-end" type="date">
+        </div>
+        <div class="form-group full-width">
+          <label>หมายเหตุ</label>
+          <input id="pf-note" type="text" placeholder="ไม่บังคับ">
+        </div>
+      </div>
+      <div id="pf-error" class="sw-error"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closePrinterForm()">ยกเลิก</button>
+      <button class="btn btn-primary" id="pf-save-btn" onclick="savePrinter()">บันทึก</button>
+    </div>
+  </div>
 </div>
 
 <!-- ======= MODAL ======= -->

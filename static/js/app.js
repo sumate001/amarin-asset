@@ -160,6 +160,8 @@ let swCurrentEmp = null; // {id, name}
 let swRows       = [];   // ร่างรายการในหน้าถือครอง — ยังไม่บันทึกจนกว่าจะกดยืนยัน
 let swRowSeq     = 0;    // ตัวนับ key ของแถวในร่าง
 let swCatEditId  = null; // id catalog ที่กำลังแก้ไขในหน้าคลัง
+let swcBu         = '';         // แท็บ BU ในคลัง ('' = รวมทุก BU)
+let swcBuList     = [];         // [{bu_code, bu}]
 let swcMembers    = new Set();  // โปรแกรมที่ชุดรวมซึ่งกำลังแก้ครอบคลุม
 let swcMembersAll = false;      // แสดงโปรแกรมของผู้ผลิตอื่นด้วย
 
@@ -1099,8 +1101,11 @@ async function loadSoftwareEmpMap() {
 }
 
 /** โหลดคลังกลาง — ใช้ทั้ง dropdown และหน้าจัดการคลัง */
-async function loadSwCatalogData(includeInactive) {
-  swCatalog = await api('/api/software/catalog' + (includeInactive ? '?all=1' : ''));
+async function loadSwCatalogData(includeInactive, bu) {
+  const p = new URLSearchParams();
+  if (includeInactive) p.set('all', '1');
+  if (bu) p.set('bu', bu);
+  swCatalog = await api('/api/software/catalog' + (p.toString() ? '?' + p : ''));
   return swCatalog;
 }
 
@@ -1451,14 +1456,46 @@ async function openSwCatalog() {
   document.getElementById('swcat-list').innerHTML =
     '<div style="text-align:center;padding:24px;color:#94a3b8">กำลังโหลด...</div>';
   document.getElementById('swcat-overlay').classList.add('open');
+  if (!swcBuList.length) {
+    try { swcBuList = (await api('/api/filters')).bus || []; } catch (e) {}
+  }
+  renderSwcBuTabs();
   await loadSwCatalog();
   document.getElementById('swc-name').focus();
+}
+
+/** แท็บ BU — ทั้งหมด = ผลรวม (ดูอย่างเดียว), แท็บ BU = กรอกจำนวนซื้อของ BU นั้น */
+function renderSwcBuTabs() {
+  const tabs = [{ bu_code: '', bu: 'รวมทุก BU' }, ...swcBuList];
+  document.getElementById('swc-bu-tabs').innerHTML = tabs.map(b => `
+    <button class="swc-bu-tab${swcBu === b.bu_code ? ' active' : ''}"
+            onclick="switchSwcBu('${esc(b.bu_code)}')" title="${esc(b.bu || '')}">
+      ${b.bu_code ? esc(b.bu_code) : 'รวมทุก BU'}</button>`).join('');
+  document.getElementById('swc-bu-note').innerHTML = swcBu
+    ? `กำลังดูของ <b>${esc(swcBu)}</b> — จำนวนที่ซื้อ / วันต่ออายุ / ราคา และยอดใช้ เป็นของ ${esc(swcBu)} เท่านั้น`
+    : 'ยอดรวมทุก BU — จำนวนที่ซื้อแก้ได้ในแท็บของแต่ละ BU';
+  // แท็บรวม: ช่องจำนวนซื้อเป็นผลรวม แก้ตรงไม่ได้
+  ['swc-seats', 'swc-renew', 'swc-price'].forEach(id => {
+    const el = document.getElementById(id);
+    el.disabled = !swcBu;
+    el.title = swcBu ? '' : 'เลือกแท็บ BU ก่อน แล้วกรอกจำนวนของ BU นั้น';
+  });
+}
+
+async function switchSwcBu(bu) {
+  if (swcBu === bu) return;
+  swcBu = bu;
+  cancelSwCatalogEdit();
+  renderSwcBuTabs();
+  document.getElementById('swcat-list').innerHTML =
+    '<div style="text-align:center;padding:24px;color:#94a3b8">กำลังโหลด...</div>';
+  await loadSwCatalog(true);
 }
 
 async function loadSwCatalog(fromToggle) {
   const showInactive = document.getElementById('swc-show-inactive').checked;
   try {
-    await loadSwCatalogData(showInactive);
+    await loadSwCatalogData(showInactive, swcBu);
   } catch (e) {
     document.getElementById('swcat-list').innerHTML =
       '<div class="sw-empty">โหลดคลังไม่สำเร็จ</div>';
@@ -1592,8 +1629,11 @@ async function saveSwCatalog() {
   };
   // เลิกเป็นชุดรวม = ล้างรายการที่ครอบคลุมทิ้งด้วย
   body.members = body.is_bundle ? [...swcMembers] : [];
+  // จำนวนซื้อเป็นของแท็บ BU ที่เปิดอยู่ — แท็บรวมไม่ส่ง (ฝั่ง server ไม่แตะ)
+  if (swcBu) body.bu = swcBu;
+  else { delete body.seats; delete body.renew_date; delete body.unit_price; }
   if (!body.name) { swcSetError('กรุณาระบุชื่อ Software'); return; }
-  if (body.seats !== '' && (!/^\d+$/.test(body.seats))) {
+  if (body.seats != null && body.seats !== '' && (!/^\d+$/.test(body.seats))) {
     swcSetError('จำนวนที่ซื้อต้องเป็นจำนวนเต็มตั้งแต่ 0 ขึ้นไป'); return;
   }
   if (body.is_bundle && !body.members.length) {
@@ -1676,8 +1716,11 @@ function swSeatCellHtml(c) {
   }
   const st = c.over > 0 ? `<div class="s over">⚠ ใช้เกิน ${c.over}</div>`
                         : `<div class="s ok">เหลือ ${c.available}</div>`;
+  // แท็บรวม: บอกว่ายอดซื้อมาจาก BU ไหนบ้าง
+  const parts = !swcBu && c.seats_by_bu && Object.keys(c.seats_by_bu).length > 1
+    ? `<div class="s">${Object.entries(c.seats_by_bu).map(([b, n]) => `${esc(b)} ${n}`).join(' · ')}</div>` : '';
   return `<div class="swcat-seats" title="ใช้ / ซื้อ">
-    <div class="n">${used} <small>/ ${c.seats} ซื้อ</small></div>${st}${via}</div>`;
+    <div class="n">${used} <small>/ ${c.seats} ซื้อ</small></div>${st}${parts}${via}</div>`;
 }
 
 /** วันต่ออายุ — แดงถ้าเลยแล้ว ส้มถ้าเหลือไม่ถึง 60 วัน */
@@ -2651,6 +2694,7 @@ function switchDashTab(name) {
   if (pane) pane.style.display = '';
   if (name === 'rental') loadRentalExportOptions();
   if (name === 'software') loadSoftwareDashboard();
+  if (name === 'printer')  loadPrinters();
 }
 
 // ==============================
@@ -2943,6 +2987,14 @@ function renderSwVendor() {
 
   const s = v.summary;
   const R = v.rule;
+
+  // ตัวเลือก BU สำหรับ Export — เฉพาะ BU ที่มีคนใช้ของผู้ผลิตนี้
+  const exSel = document.getElementById('sv-export-bu');
+  const keep  = exSel.value;
+  exSel.innerHTML = '<option value="">Export ทุก BU</option>' +
+    v.by_bu.map(b => `<option value="${esc(b.bu_code)}">Export เฉพาะ ${esc(b.bu_code)} (${b.people} คน)</option>`).join('');
+  exSel.value = v.by_bu.some(b => b.bu_code === keep) ? keep : '';
+
   document.getElementById('sv-summary').innerHTML = `
     <span title="ชุดรวม All Apps นับเป็น 1 — โปรแกรมที่อยู่ในชุดไม่นับซ้ำ"><b>${s.licenses.toLocaleString()}</b> license</span>
     <span><b>${s.people.toLocaleString()}</b> คน</span>
@@ -3094,6 +3146,17 @@ function renderSwGroups() {
          ? `<span style="color:#15803d">เหลือ ${(p.seats - p.qty).toLocaleString()}</span>`
          : '<span style="color:#15803d">พอดี</span>'}</td>`;
 
+  // ยอดรวมซื้อไว้ — ระบุจำนวนซื้อไม่ครบจะไม่สรุปขาด/เหลือ
+  const sumTd = items => {
+    const known = items.filter(p => p.seats != null);
+    if (!known.length) return '<td class="sg-r"><span class="sv-off">—</span></td><td></td>';
+    const tot = known.reduce((n, p) => n + p.seats, 0);
+    if (known.length < items.length)
+      return `<td class="sg-r"><b>${tot.toLocaleString()}</b></td>
+              <td class="sg-r" style="color:#b45309;font-size:.72rem">ระบุแล้ว ${known.length}/${items.length}</td>`;
+    return seatTd({ seats: tot, qty: items.reduce((n, p) => n + p.qty, 0) });
+  };
+
   // ตารางหลัก = ใบสั่งซื้อ: รายการ + จำนวน
   document.getElementById('sg-plan').innerHTML = `
     <table class="sg-table sg-plan-table">
@@ -3114,13 +3177,15 @@ function renderSwGroups() {
             <td>${esc(p.item)}</td>
             <td class="sg-r"><b class="sg-qty-s">${p.qty.toLocaleString()}</b></td>
             ${seatTd(p)}
-            <td class="sg-who">${p.qty.toLocaleString()} คน</td>
+            <td class="sg-who">${p.qty ? p.qty.toLocaleString() + ' คน' : esc(p.note)}</td>
           </tr>`).join('')}
       </tbody>
       <tfoot>
-        <tr><td>รวมตัวแยก</td><td class="sg-r">${singleQ.toLocaleString()}</td><td colspan="3"></td></tr>
+        <tr><td>รวมตัวแยก</td><td class="sg-r">${singleQ.toLocaleString()}</td>
+            ${sumTd(singles)}<td></td></tr>
         <tr><td><b>รวมทั้งหมด</b></td>
-            <td class="sg-r"><b>${(bundleQ + singleQ).toLocaleString()}</b></td><td colspan="2"></td>
+            <td class="sg-r"><b>${(bundleQ + singleQ).toLocaleString()}</b></td>
+            ${sumTd(g.plan)}
             <td class="sg-who">${bundleQ} All Apps + ${singleQ} ตัวแยก</td></tr>
       </tfoot>
     </table>`;
@@ -3134,7 +3199,7 @@ function renderSwGroups() {
        กรอกได้ที่ "จัดการคลัง Software" → ✏️ → จำนวนที่ซื้อ</span>` : '');
 
   // แยกตาม BU/ฝ่าย — คอลัมน์เท่ากับรายการในแผน
-  const cols = singles.map(p => p.item);
+  const cols = singles.filter(p => p.qty).map(p => p.item);
   const cell = v => v ? v.toLocaleString() : '<span class="sv-off">·</span>';
   document.getElementById('sg-plan-bu').innerHTML = `
     <table class="sg-table">
@@ -3185,7 +3250,9 @@ function expandSwVendor(open) {
 }
 
 function exportSwVendor(btn) {
-  _downloadXlsx(btn, '/api/software/export?vendor=' + encodeURIComponent(swVendor.vendor),
+  const bu = document.getElementById('sv-export-bu').value;
+  _downloadXlsx(btn, '/api/software/export?vendor=' + encodeURIComponent(swVendor.vendor) +
+                     (bu ? '&bu=' + encodeURIComponent(bu) : ''),
                 'software_vendor.xlsx');
 }
 
@@ -3869,6 +3936,252 @@ window.addEventListener('beforeunload', e => {
 });
 
 // ---- Helpers ----
+// ==============================
+// ---- Dashboard: บริหาร Printer ----
+// ==============================
+
+let printers   = null;   // ผลจาก /api/printers {rows, summary, by_building}
+let prEditId   = null;   // id เครื่องที่กำลังแก้ (null = เพิ่มใหม่)
+
+const PR_STATUS = {
+  expired: { label: 'หมดสัญญาแล้ว', cls: 'expired' },
+  soon:    { label: 'ใกล้หมด',       cls: 'soon' },
+  active:  { label: 'อยู่ในสัญญา',   cls: 'active' },
+  none:    { label: 'ไม่ระบุสัญญา',  cls: 'none' },
+};
+
+const _prMoney = v => v == null ? '—'
+  : Number(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+const _prPct = p => p == null ? '<span class="sv-off">—</span>'
+  : p > 0 ? `<span class="pr-up">▲ ${p.toLocaleString('th-TH')}%</span>`
+  : p < 0 ? `<span class="pr-down">▼ ${Math.abs(p).toLocaleString('th-TH')}%</span>`
+  : '<span class="pr-same">0%</span>';
+const _prBE = y => y ? String(y + 543) : '—';   // เก็บ ค.ศ. แสดง พ.ศ.
+
+async function loadPrinters(force) {
+  if (printers && !force) { renderPrinters(); return; }
+  document.getElementById('pr-table-wrap').innerHTML =
+    '<div style="text-align:center;padding:24px;color:#94a3b8">กำลังโหลด...</div>';
+  try {
+    printers = await api('/api/printers');
+  } catch (e) {
+    document.getElementById('pr-table-wrap').innerHTML =
+      '<div class="sw-empty">โหลดข้อมูลไม่สำเร็จ</div>';
+    return;
+  }
+  // ตัวเลือกในตัวกรอง + ช่องกรอกในฟอร์ม มาจากข้อมูลที่มีอยู่
+  const uniq = f => [...new Set(printers.rows.map(r => r[f]).filter(Boolean))]
+                      .sort((a, b) => a.localeCompare(b));
+  const fillSel = (id, label, vals) => {
+    const el = document.getElementById(id), keep = el.value;
+    el.innerHTML = `<option value="">${label}</option>` +
+      vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    el.value = vals.includes(keep) ? keep : '';
+  };
+  fillSel('pr-building', 'ทุกอาคาร', uniq('building'));
+  fillSel('pr-brand', 'ทุกยี่ห้อ', uniq('brand'));
+  const fillList = (id, vals) => {
+    document.getElementById(id).innerHTML = vals.map(v => `<option value="${esc(v)}">`).join('');
+  };
+  fillList('pf-brand-list', uniq('brand'));
+  fillList('pf-building-list', uniq('building'));
+  fillList('pf-ink-list', [...new Set(['Toner ขาวดำ', 'Toner สี', 'Ink Tank', 'Ink Cartridge',
+                                        ...uniq('ink_type')])]);
+  fillList('pf-paper-list', [...new Set(['A4', 'A3', 'A4, A3', 'A4, A3, B4', ...uniq('paper')])]);
+  renderPrinters();
+}
+
+function renderPrinters() {
+  const s = printers.summary;
+  document.getElementById('pr-total').textContent = s.total.toLocaleString();
+  document.getElementById('pr-total-sub').textContent =
+    printers.by_building.length ? `${printers.by_building.length} อาคาร` : 'ยังไม่มีข้อมูล — กด "＋ เพิ่มเครื่อง"';
+  document.getElementById('pr-age').textContent = s.avg_age == null ? '—' : `${s.avg_age} ปี`;
+  document.getElementById('pr-age-sub').textContent =
+    s.old_5y ? `ใช้งานมาแล้ว 5 ปีขึ้นไป ${s.old_5y} เครื่อง` : '';
+  document.getElementById('pr-contract').textContent = (s.expired + s.soon).toLocaleString();
+  document.getElementById('pr-contract-sub').textContent =
+    `หมดแล้ว ${s.expired} · เหลือ ≤ ${s.soon_days} วัน ${s.soon}` +
+    (s.no_contract ? ` · ไม่ระบุ ${s.no_contract}` : '') + ' ▾';
+  const ch = document.getElementById('pr-change');
+  ch.innerHTML = s.avg_change == null ? '—' : _prPct(s.avg_change);
+  document.getElementById('pr-change-sub').textContent =
+    s.avg_change == null ? 'ยังไม่มีข้อมูลราคาเดิม/ใหม่' : `เพิ่มขึ้น ${s.up} เครื่อง · ลดลง ${s.down} เครื่อง`;
+
+  // ตัวกรอง
+  const q  = (document.getElementById('pr-search').value || '').trim().toLowerCase();
+  const bd = document.getElementById('pr-building').value;
+  const br = document.getElementById('pr-brand').value;
+  const st = document.getElementById('pr-status').value;
+  const rows = printers.rows.filter(r =>
+    (!q || ['brand', 'model', 'serial_no', 'building', 'ink_type', 'paper', 'note']
+             .some(f => (r[f] || '').toLowerCase().includes(q))) &&
+    (!bd || r.building === bd) &&
+    (!br || r.brand === br) &&
+    (!st || (st === 'due' ? ['expired', 'soon'].includes(r.contract_status)
+                          : r.contract_status === st)));
+
+  // แยกตามอาคาร — คลิกเพื่อกรอง
+  document.getElementById('pr-buildings').innerHTML = printers.by_building.length > 1
+    ? printers.by_building.map(([b, n]) => `
+        <span class="pr-bchip${bd === b ? ' on' : ''}" onclick="setPrinterBuilding('${esc(b).replace(/'/g, '&#39;')}')">
+          ${esc(b)} <b>${n}</b></span>`).join('')
+    : '';
+
+  const wrap = document.getElementById('pr-table-wrap');
+  if (!printers.rows.length) {
+    wrap.innerHTML = '<div class="sw-empty">ยังไม่มีเครื่องในระบบ — กด "＋ เพิ่มเครื่อง" เพื่อเริ่มบันทึก</div>';
+    return;
+  }
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="sw-empty">ไม่พบเครื่องตามตัวกรอง</div>';
+    return;
+  }
+  wrap.innerHTML = `
+    <table class="pr-table">
+      <thead><tr>
+        <th>ยี่ห้อ</th><th>รุ่น</th><th>อาคารที่ตั้ง</th><th>เลขเครื่อง</th><th>ชนิดหมึก</th>
+        <th class="r">สำเนา/นาที</th><th class="r">ปีที่ซื้อ</th><th class="r">อายุ</th><th>กระดาษ</th>
+        <th class="r">ค่าสำเนา<br>ราคาเดิม</th><th class="r">ค่าสำเนา<br>ราคาใหม่</th><th class="r">เพิ่ม/ลด</th>
+        <th>สัญญา (เริ่มต้น – สิ้นสุด)</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => {
+          const S = PR_STATUS[r.contract_status];
+          const left = r.contract_status === 'soon' ? ` · เหลือ ${r.days_left} วัน`
+                     : r.contract_status === 'expired' ? ` · เลยมา ${-r.days_left} วัน` : '';
+          return `
+          <tr>
+            <td class="b">${esc(r.brand) || '—'}</td>
+            <td>${esc(r.model) || '—'}</td>
+            <td>${esc(r.building) || '<span class="sv-off">—</span>'}</td>
+            <td class="mono">${esc(r.serial_no) || '—'}</td>
+            <td>${esc(r.ink_type) || '—'}</td>
+            <td class="r">${r.ppm != null ? r.ppm.toLocaleString() : '—'}</td>
+            <td class="r">${_prBE(r.purchase_year)}</td>
+            <td class="r${r.age_years >= 5 ? ' pr-old' : ''}">${r.age_years != null ? r.age_years + ' ปี' : '—'}</td>
+            <td>${esc(r.paper) || '—'}</td>
+            <td class="r">${_prMoney(r.price_old)}</td>
+            <td class="r"><b>${_prMoney(r.price_new)}</b></td>
+            <td class="r">${_prPct(r.change_pct)}</td>
+            <td class="nowrap">
+              ${r.contract_start || r.contract_end
+                ? `${_dateFmt(r.contract_start)} – ${_dateFmt(r.contract_end)}` : ''}
+              <div><span class="pr-st ${S.cls}">${S.label}${left}</span></div>
+            </td>
+            <td class="nowrap">
+              <button class="icon-btn edit" onclick="openPrinterForm(${r.id})" title="แก้ไข">✏️</button>
+              <button class="icon-btn del" onclick="deletePrinter(${r.id})" title="ลบ">🗑️</button>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+      <tfoot><tr><td colspan="14">แสดง ${rows.length.toLocaleString()} จาก ${printers.rows.length.toLocaleString()} เครื่อง</td></tr></tfoot>
+    </table>`;
+}
+
+function setPrinterStatusFilter(v) {
+  document.getElementById('pr-status').value = v;
+  if (printers) renderPrinters();
+}
+
+function setPrinterBuilding(b) {
+  const el = document.getElementById('pr-building');
+  el.value = el.value === b ? '' : b;
+  renderPrinters();
+}
+
+const PF_FIELDS = {
+  brand: 'pf-brand', model: 'pf-model', building: 'pf-building', serial_no: 'pf-serial',
+  ink_type: 'pf-ink', ppm: 'pf-ppm', purchase_year: 'pf-year', paper: 'pf-paper',
+  price_old: 'pf-price-old', price_new: 'pf-price-new',
+  contract_start: 'pf-start', contract_end: 'pf-end', note: 'pf-note',
+};
+
+function openPrinterForm(id) {
+  const r = id ? printers.rows.find(x => x.id === id) : null;
+  prEditId = r ? r.id : null;
+  document.getElementById('pr-form-title').textContent = r ? 'แก้ไขเครื่อง Printer' : 'เพิ่มเครื่อง Printer';
+  Object.entries(PF_FIELDS).forEach(([f, el]) => {
+    let v = r ? r[f] : '';
+    if (f === 'purchase_year' && v) v = v + 543;   // แสดงเป็น พ.ศ.
+    document.getElementById(el).value = v == null ? '' : v;
+  });
+  prSetError('');
+  updatePrinterPreview();
+  document.getElementById('printer-overlay').classList.add('open');
+  document.getElementById('pf-brand').focus();
+}
+
+function closePrinterForm() {
+  document.getElementById('printer-overlay').classList.remove('open');
+}
+
+function prSetError(msg) {
+  const el = document.getElementById('pf-error');
+  el.textContent = msg || '';
+  el.style.display = msg ? '' : 'none';
+}
+
+/** อายุ และ % ราคาเปลี่ยน คำนวณให้ดูทันทีขณะกรอก */
+function updatePrinterPreview() {
+  let y = parseInt(document.getElementById('pf-year').value);
+  if (y > 2400) y -= 543;
+  const age = y ? new Date().getFullYear() - y : null;
+  document.getElementById('pf-age').innerHTML =
+    age != null && age >= 0 ? `${age} ปี <span class="pf-hint">(ซื้อปี พ.ศ. ${y + 543})</span>` : '—';
+
+  const po = parseFloat(document.getElementById('pf-price-old').value);
+  const pn = parseFloat(document.getElementById('pf-price-new').value);
+  const el = document.getElementById('pf-change');
+  if (po > 0 && !isNaN(pn)) {
+    const pct = Math.round((pn - po) / po * 10000) / 100;
+    const diff = Math.round((pn - po) * 10000) / 10000;
+    el.innerHTML = `${_prPct(pct)} <span class="pf-hint">(${diff >= 0 ? '+' : '−'}${_prMoney(Math.abs(diff))} บาท/แผ่น)</span>`;
+  } else {
+    el.textContent = '—';
+  }
+}
+
+async function savePrinter() {
+  const body = {};
+  Object.entries(PF_FIELDS).forEach(([f, el]) => { body[f] = document.getElementById(el).value.trim(); });
+  if (!body.brand && !body.model && !body.serial_no) {
+    prSetError('กรอกอย่างน้อย ยี่ห้อ รุ่น หรือเลขเครื่อง'); return;
+  }
+  const btn = document.getElementById('pf-save-btn');
+  btn.disabled = true;
+  try {
+    if (prEditId) await api(`/api/printers/${prEditId}`, 'PUT', body);
+    else          await api('/api/printers', 'POST', body);
+    showToast(prEditId ? 'แก้ไขข้อมูลเครื่องแล้ว' : 'เพิ่มเครื่องแล้ว', 'success');
+    closePrinterForm();
+    await loadPrinters(true);
+  } catch (e) {
+    prSetError(e.error || 'บันทึกไม่สำเร็จ');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function deletePrinter(id) {
+  const r = printers.rows.find(x => x.id === id);
+  if (!r) return;
+  const label = [r.brand, r.model, r.serial_no && `(${r.serial_no})`].filter(Boolean).join(' ');
+  if (!confirm(`ลบเครื่อง ${label}${r.building ? ' ที่ ' + r.building : ''} ออกจากระบบ?`)) return;
+  try {
+    await api(`/api/printers/${id}`, 'DELETE');
+    showToast('ลบเครื่องแล้ว', 'success');
+    await loadPrinters(true);
+  } catch (e) {
+    showToast(e.error || 'ลบไม่สำเร็จ', 'error');
+  }
+}
+
+function exportPrinters(btn) {
+  _downloadXlsx(btn, '/api/printers/export', 'printers.xlsx');
+}
+
 async function api(url, method = 'GET', body) {
   const opts = { method, headers: {} };
   if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }

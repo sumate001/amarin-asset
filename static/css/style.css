@@ -1199,3 +1199,60 @@ tbody td { padding: 10px 14px; vertical-align: middle; }
 .sg-cell-bundle { color: #dc2626; font-weight: 700; }
 .sg-table tr.sg-bu-row td.sg-cell-bundle { background: #fee2e2; }
 .sg-note b { color: #1e293b; }
+
+/* ================================
+   บริหาร Printer
+   ================================ */
+.pr-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.pr-table th {
+  background: #f8fafc; border-bottom: 2px solid #e2e8f0; padding: 8px 9px;
+  text-align: left; font-size: .72rem; font-weight: 700; color: #475569;
+  white-space: nowrap; vertical-align: bottom; line-height: 1.25;
+}
+.pr-table td { padding: 7px 9px; border-bottom: 1px solid #f1f5f9; color: #334155; vertical-align: top; }
+.pr-table tbody tr:hover { background: #f8fafc; }
+.pr-table .r { text-align: right; font-variant-numeric: tabular-nums; }
+.pr-table .b { font-weight: 700; color: #1e293b; }
+.pr-table .mono { font-family: monospace; font-size: .76rem; color: #64748b; }
+.pr-table .nowrap { white-space: nowrap; }
+.pr-table tfoot td { font-size: .72rem; color: #94a3b8; border-bottom: none; padding-top: 10px; }
+.pr-old { color: #b45309; font-weight: 700; }
+.pr-up   { color: #dc2626; font-weight: 700; white-space: nowrap; }
+.pr-down { color: #15803d; font-weight: 700; white-space: nowrap; }
+.pr-same { color: #64748b; font-weight: 600; }
+.pr-st {
+  display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: 4px;
+  font-size: .66rem; font-weight: 700;
+}
+.pr-st.expired { background: #fee2e2; color: #b91c1c; }
+.pr-st.soon    { background: #fef3c7; color: #92400e; }
+.pr-st.active  { background: #dcfce7; color: #166534; }
+.pr-st.none    { background: #f1f5f9; color: #94a3b8; }
+.pr-buildings { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.pr-bchip {
+  cursor: pointer; font-size: .74rem; color: #475569; background: #f8fafc;
+  border: 1px solid #e2e8f0; border-radius: 14px; padding: 3px 10px;
+}
+.pr-bchip b { color: #1e3a5f; margin-left: 2px; }
+.pr-bchip:hover { border-color: #93c5fd; }
+.pr-bchip.on { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
+.pr-add-btn { background: #1e3a5f; color: #fff; border-color: #1e3a5f; }
+.pr-add-btn:hover { background: #274b77; color: #fff; }
+.pf-hint { font-size: .7rem; color: #94a3b8; font-weight: 400; }
+.pf-calc {
+  padding: 8px 11px; border-radius: 8px; background: #f8fafc; border: 1px dashed #e2e8f0;
+  font-size: .85rem; font-weight: 600; color: #1e293b; min-height: 36px;
+}
+
+/* แท็บ BU ในคลัง Software */
+.swc-bu-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;
+  border-bottom: 2px solid #f3e8ff; }
+.swc-bu-tab {
+  font-family: inherit; font-size: .78rem; font-weight: 600; color: #64748b;
+  background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px;
+  padding: 7px 12px; cursor: pointer;
+}
+.swc-bu-tab:hover { color: #7e22ce; }
+.swc-bu-tab.active { color: #7e22ce; border-bottom-color: #7e22ce; }
+.swc-bu-note { font-size: .74rem; color: #64748b; margin-bottom: 10px; }
+.swcat-form-grid input:disabled { background: #f1f5f9; color: #94a3b8; cursor: not-allowed; }

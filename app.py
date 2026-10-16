@@ -227,6 +227,27 @@ def init_db():
             PRIMARY KEY (bundle_id, software_id)
         )
     ''')
+    # เครื่องพิมพ์ / เครื่องถ่ายเอกสาร — ข้อมูลสัญญาและค่าสำเนา
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS printers (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            brand          TEXT,
+            model          TEXT,
+            building       TEXT,
+            serial_no      TEXT,
+            ink_type       TEXT,
+            ppm            INTEGER,          -- จำนวนสำเนา/นาที
+            purchase_year  INTEGER,          -- เก็บเป็น ค.ศ.
+            paper          TEXT,
+            price_old      REAL,             -- ค่าสำเนา/แผ่น ราคาเดิม
+            price_new      REAL,             -- ค่าสำเนา/แผ่น ราคาใหม่
+            contract_start TEXT,
+            contract_end   TEXT,
+            note           TEXT,
+            created_at     TEXT DEFAULT (datetime('now','localtime')),
+            updated_at     TEXT DEFAULT (datetime('now','localtime'))
+        )
+    ''')
     # ประวัติการถอน software คืนคลัง (พนักงาน inactive) — ไว้ตรวจย้อนหลัง/กู้คืน
     conn.execute('''
         CREATE TABLE IF NOT EXISTS software_release_log (
@@ -242,6 +263,19 @@ def init_db():
     ''')
     conn.commit()
     _seed_software_catalog(conn)
+    # จำนวนที่ซื้อแยกตาม BU — software_catalog.seats เป็นยอดรวมทุก BU (คำนวณจากตารางนี้)
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS software_bu_seats (
+            software_id INTEGER NOT NULL,
+            bu_code     TEXT NOT NULL,
+            seats       INTEGER,
+            renew_date  TEXT,
+            unit_price  REAL,
+            PRIMARY KEY (software_id, bu_code)
+        )
+    ''')
+    _migrate_bu_seats(conn)
+    conn.commit()
     # ตาข่ายกันหลุด: ใครไม่ active แล้วแต่ยังถือ software อยู่ → ถอนคืนคลังตอนเริ่มระบบ
     _release_inactive_software(conn, reason='sweep: พนักงานไม่ active')
     conn.commit()
@@ -296,8 +330,9 @@ def list_employees():
 
     where, params = [], []
     if q:
-        where.append("(name LIKE ? OR nickname LIKE ? OR position LIKE ? OR department LIKE ?)")
-        params += [f'%{q}%'] * 4
+        where.append("(name LIKE ? OR nickname LIKE ? OR position LIKE ? OR department LIKE ? "
+                     "OR email LIKE ?)")
+        params += [f'%{q}%'] * 5
     if emp_code:
         where.append("UPPER(TRIM(emp_code)) = ?"); params.append(emp_code.upper())
     if email:
@@ -664,8 +699,9 @@ def export_excel():
 
     where, params = [], []
     if q:
-        where.append("(name LIKE ? OR nickname LIKE ? OR position LIKE ? OR department LIKE ?)")
-        params += [f'%{q}%'] * 4
+        where.append("(name LIKE ? OR nickname LIKE ? OR position LIKE ? OR department LIKE ? "
+                     "OR email LIKE ?)")
+        params += [f'%{q}%'] * 5
     if bu:
         where.append("bu_code = ?"); params.append(bu)
     if dept:
@@ -1395,13 +1431,83 @@ def _emp_covered(conn, members=None):
     return out
 
 
+SEAT_MAIN_BU = 'AMTV'   # ตอนแบ่งยอดซื้อเดิมเป็นราย BU ส่วนที่เหลือยกให้ BU นี้
+
+
+def _seat_usage_by_bu(conn):
+    """{(software_id, bu_code): จำนวนที่กิน seat} — ไม่นับโปรแกรมที่ใช้ผ่านชุดรวม"""
+    cover = _emp_covered(conn)
+    out = Counter()
+    for r in conn.execute('SELECT a.employee_id, a.software_id, e.bu_code '
+                          'FROM software_assignments a JOIN employees e ON e.id = a.employee_id'):
+        if r['software_id'] not in cover.get(r['employee_id'], ()):
+            out[(r['software_id'], r['bu_code'] or '')] += 1
+    return out
+
+
+def _migrate_bu_seats(conn):
+    """ครั้งแรกที่มีตารางราย BU: แบ่งยอดซื้อรวมเดิมให้แต่ละ BU เท่าที่ใช้จริง
+    ส่วนที่เหลือยกให้ SEAT_MAIN_BU (ผู้ใช้แก้ทีหลังได้ในแท็บ BU)"""
+    if conn.execute('SELECT 1 FROM software_bu_seats LIMIT 1').fetchone():
+        return
+    rows = conn.execute('SELECT id, name, seats, renew_date, unit_price FROM software_catalog '
+                        'WHERE seats IS NOT NULL').fetchall()
+    if not rows:
+        return
+    usage = _seat_usage_by_bu(conn)
+    for c in rows:
+        left  = c['seats']
+        alloc = {}
+        for (sid, bu), n in sorted(usage.items(), key=lambda kv: kv[0][1]):
+            if sid == c['id'] and bu and bu != SEAT_MAIN_BU and left > 0:
+                alloc[bu] = min(n, left)
+                left -= alloc[bu]
+        alloc[SEAT_MAIN_BU] = left
+        for bu, n in alloc.items():
+            if n or len(alloc) == 1:      # ยอดเหลือ 0 ไม่ต้องสร้างแถวให้ BU หลัก
+                conn.execute(
+                    'INSERT INTO software_bu_seats (software_id, bu_code, seats, renew_date, unit_price) '
+                    'VALUES (?,?,?,?,?)', (c['id'], bu, n, c['renew_date'], c['unit_price']))
+        app.logger.warning('แบ่งยอดซื้อ "%s" %s → %s', c['name'], c['seats'], alloc)
+
+
+def _sync_catalog_seats(conn, cid):
+    """ยอดรวมในคลัง = ผลรวมทุก BU · วันต่ออายุ = วันที่ใกล้สุด · ราคา = ถ้าทุก BU เท่ากัน"""
+    rs = conn.execute('SELECT seats, renew_date, unit_price FROM software_bu_seats '
+                      'WHERE software_id=?', (cid,)).fetchall()
+    seats  = [r['seats'] for r in rs if r['seats'] is not None]
+    renews = [r['renew_date'] for r in rs if r['renew_date']]
+    prices = {r['unit_price'] for r in rs}
+    conn.execute('UPDATE software_catalog SET seats=?, renew_date=?, unit_price=? WHERE id=?',
+                 (sum(seats) if seats else None, min(renews) if renews else None,
+                  prices.pop() if len(prices) == 1 else None, cid))   # {None} → None
+
+
+def _set_bu_seats(conn, cid, bu, d):
+    """บันทึกจำนวนซื้อ/วันต่ออายุ/ราคา ของ BU หนึ่ง (ว่างหมด = ลบแถวทิ้ง)"""
+    seats = _int_or_none(d.get('seats'))
+    renew = (d.get('renew_date') or '').strip() or None
+    price = _float_or_none(d.get('unit_price'))
+    if seats is None and renew is None and price is None:
+        conn.execute('DELETE FROM software_bu_seats WHERE software_id=? AND bu_code=?', (cid, bu))
+    else:
+        conn.execute(
+            'INSERT INTO software_bu_seats (software_id, bu_code, seats, renew_date, unit_price) '
+            'VALUES (?,?,?,?,?) ON CONFLICT(software_id, bu_code) DO UPDATE SET '
+            'seats=excluded.seats, renew_date=excluded.renew_date, unit_price=excluded.unit_price',
+            (cid, bu, seats, renew, price))
+    _sync_catalog_seats(conn, cid)
+
+
 @app.route('/api/software/catalog', methods=['GET'])
 def software_catalog_list():
     """รายการใน catalog พร้อมยอดผู้ถือครองแต่ละตัว
 
     ?all=1 → รวมรายการที่ปิดใช้งานแล้ว (ค่าปกติแสดงเฉพาะที่ยังใช้อยู่)
+    ?bu=AMTV → ยอดซื้อ/ใช้/เหลือ ของ BU นั้น (ค่าปกติ = รวมทุก BU)
     """
     show_all = request.args.get('all') == '1'
+    bu       = (request.args.get('bu') or '').strip()
     conn = get_db()
     rows = conn.execute(
         f'''SELECT c.*, (SELECT COUNT(*) FROM software_assignments a
@@ -1419,10 +1525,18 @@ def software_catalog_list():
             in_bundle[mid].append(bid)
     # คนที่ถือชุดรวมอยู่แล้ว ใช้โปรแกรมข้างในได้โดยไม่กิน seat ของตัวแยก
     cover   = _emp_covered(conn, members)
-    covered = Counter(
-        r['software_id'] for r in
-        conn.execute('SELECT employee_id, software_id FROM software_assignments')
-        if r['software_id'] in cover.get(r['employee_id'], ()))
+    asg = conn.execute('''SELECT a.employee_id, a.software_id, e.bu_code
+                          FROM software_assignments a
+                          LEFT JOIN employees e ON e.id = a.employee_id''').fetchall()
+    if bu:
+        asg = [r for r in asg if (r['bu_code'] or '') == bu]
+    holders = Counter(r['software_id'] for r in asg)
+    covered = Counter(r['software_id'] for r in asg
+                      if r['software_id'] in cover.get(r['employee_id'], ()))
+    # ยอดซื้อราย BU — แท็บ BU ใช้ของ BU นั้น, แท็บรวมแสดงแยกให้ดูว่ามาจาก BU ไหน
+    bu_seats = defaultdict(dict)
+    for r in conn.execute('SELECT * FROM software_bu_seats'):
+        bu_seats[r['software_id']][r['bu_code']] = dict(r)
     conn.close()
 
     out = []
@@ -1432,11 +1546,19 @@ def software_catalog_list():
                                for m in members.get(r['id'], [])),
                               key=lambda x: x['name'].lower())
         d['in_bundles'] = [{'id': b, 'name': names.get(b, '?')} for b in in_bundle.get(r['id'], [])]
+        d['seats_by_bu'] = {b: x['seats'] for b, x in sorted(bu_seats[r['id']].items())
+                            if x['seats'] is not None}
+        if bu:
+            mine = bu_seats[r['id']].get(bu, {})
+            d['seats']      = mine.get('seats')
+            d['renew_date'] = mine.get('renew_date')
+            d['unit_price'] = mine.get('unit_price')
+        d['holders'] = holders.get(r['id'], 0)
         d['covered'] = covered.get(r['id'], 0)
-        d['used']    = r['holders'] - d['covered']      # จำนวนที่กิน seat จริง
+        d['used']    = d['holders'] - d['covered']      # จำนวนที่กิน seat จริง
         # seats = จำนวนที่ซื้อ (None = ยังไม่ระบุ) → คำนวณเหลือ/เกินให้เลย
-        d['available'] = (r['seats'] - d['used']) if r['seats'] is not None else None
-        d['over'] = max(0, d['used'] - r['seats']) if r['seats'] is not None else 0
+        d['available'] = (d['seats'] - d['used']) if d['seats'] is not None else None
+        d['over'] = max(0, d['used'] - d['seats']) if d['seats'] is not None else 0
         out.append(d)
     return jsonify(out)
 
@@ -1455,15 +1577,17 @@ def software_catalog_add():
         return jsonify({'error': f'"{name}" มีอยู่ในคลังแล้ว'}), 409
     cur = conn.execute(
         '''INSERT INTO software_catalog
-             (name, category, vendor, license_type, note, seats, renew_date,
-              unit_price, is_bundle)
-           VALUES (?,?,?,?,?,?,?,?,?)''',
+             (name, category, vendor, license_type, note, is_bundle)
+           VALUES (?,?,?,?,?,?)''',
         (name, (d.get('category') or '').strip(), (d.get('vendor') or '').strip(),
          (d.get('license_type') or '').strip(), (d.get('note') or '').strip(),
-         _int_or_none(d.get('seats')), (d.get('renew_date') or '').strip() or None,
-         _float_or_none(d.get('unit_price')), 1 if d.get('is_bundle') else 0))
+         1 if d.get('is_bundle') else 0))
     new_id = cur.lastrowid
     _set_bundle_members(conn, new_id, d.get('members'))
+    # จำนวนซื้อเก็บราย BU — เพิ่มจากแท็บไหนก็เป็นของ BU นั้น
+    bu = (d.get('bu') or '').strip()
+    if bu:
+        _set_bu_seats(conn, new_id, bu, d)
     conn.commit()
     conn.close()
     return jsonify({'ok': True, 'id': new_id, 'name': name})
@@ -1485,17 +1609,18 @@ def software_catalog_update(cid):
     cur = conn.execute(
         '''UPDATE software_catalog
            SET name=?, category=?, vendor=?, license_type=?, note=?, is_active=?,
-               seats=?, renew_date=?, unit_price=?, is_bundle=?,
-               updated_at=datetime('now','localtime')
+               is_bundle=?, updated_at=datetime('now','localtime')
            WHERE id=?''',
         (name, (d.get('category') or '').strip(), (d.get('vendor') or '').strip(),
          (d.get('license_type') or '').strip(), (d.get('note') or '').strip(),
-         1 if d.get('is_active', 1) else 0,
-         _int_or_none(d.get('seats')), (d.get('renew_date') or '').strip() or None,
-         _float_or_none(d.get('unit_price')), 1 if d.get('is_bundle') else 0, cid))
+         1 if d.get('is_active', 1) else 0, 1 if d.get('is_bundle') else 0, cid))
     if not cur.rowcount:
         conn.close()
         return jsonify({'error': 'ไม่พบรายการในคลัง'}), 404
+    # จำนวนซื้อ/วันต่ออายุ/ราคา แก้ได้เฉพาะในแท็บ BU (แท็บรวมเป็นผลรวม แก้ตรงไม่ได้)
+    bu = (d.get('bu') or '').strip()
+    if bu:
+        _set_bu_seats(conn, cid, bu, d)
     if 'members' in d:
         _set_bundle_members(conn, cid, d.get('members'))
     # ชื่อที่บันทึกไว้กับพนักงานเป็นสำเนา — เปลี่ยนชื่อในคลังต้องตามไปแก้ด้วย
@@ -1538,6 +1663,7 @@ def software_catalog_delete(cid):
     conn.execute('DELETE FROM software_catalog WHERE id=?', (cid,))
     conn.execute('DELETE FROM software_bundle_items WHERE bundle_id=? OR software_id=?',
                  (cid, cid))
+    conn.execute('DELETE FROM software_bu_seats WHERE software_id=?', (cid,))
     conn.commit()
     conn.close()
     app.logger.warning('ลบ software จากคลัง: "%s" (id=%s) พร้อม license %d ใบ',
@@ -2738,6 +2864,12 @@ def dashboard_software_vendor():
         plan[0]['catalog_name'] = next((c['name'] for c in mine_cat if c['is_bundle']), None)
         for p_ in plan[1:]:
             p_['seats'] = s_seats.get(p_['item'])
+        # ตัวที่ซื้อไว้แต่ไม่มีใครต้องใช้แยก (อยู่ใน All Apps หมด) — โชว์ไว้ ยอดซื้อจะได้ครบ
+        in_plan = {p_['item'] for p_ in plan}
+        plan += [{'item': n, 'qty': 0, 'kind': 'single', 'seats': st,
+                  'note': 'ไม่มีคนต้องใช้แยก'}
+                 for n, st in sorted(s_seats.items(), key=lambda kv: kv[0].lower())
+                 if st and n not in in_plan]
 
         # แผนเดียวกันแต่แยกตาม BU/ฝ่าย เพราะงบและใบขอซื้อแยกตาม BU
         def plan_of(ppl):
@@ -2841,7 +2973,7 @@ def software_export():
     for r in rows:
         r['in_bundle'] = r['software_id'] in cover.get(r['emp_id'], ())
     unused = [dict(r) for r in conn.execute('''
-        SELECT c.name, c.category, c.vendor, c.license_type, c.is_active
+        SELECT c.name, c.category, c.vendor, c.license_type, c.is_active, c.seats
         FROM software_catalog c
         WHERE c.id NOT IN (SELECT software_id FROM software_assignments
                            WHERE software_id IS NOT NULL)
@@ -2907,22 +3039,53 @@ def software_export():
     ws['A3'].font = Font(size=9, color='64748B')
     ws.append([])
 
+    # จำนวนที่ซื้อไว้ตามคลัง (ว่าง = ยังไม่ได้ระบุ) — กรอง BU = ใช้ยอดซื้อของ BU นั้น
+    conn = get_db()
+    if bu_f:
+        seats_of = {}
+        for r in conn.execute(
+                f'''SELECT c.name, SUM(s.seats) seats FROM software_bu_seats s
+                    JOIN software_catalog c ON c.id = s.software_id
+                    WHERE s.bu_code IN ({','.join('?' * len(bu_f))}) AND s.seats IS NOT NULL
+                    GROUP BY c.name''', bu_f):
+            seats_of[r['name']] = r['seats']
+    else:
+        seats_of = {r['name']: r['seats'] for r in
+                    conn.execute('SELECT name, seats FROM software_catalog')}
+    conn.close()
+
+    def seat_diff(seats, used):
+        if seats is None:
+            return ''
+        return f'เกิน {used - seats}' if used > seats else (
+               f'เหลือ {seats - used}' if seats > used else 'พอดี')
+
     head_row = ws.max_row + 1
-    ws.append(['Software', 'หมวด', 'ลิขสิทธิ์'] + bu_cols + ['รวม', 'ใช้ในชุดรวม (ไม่นับ)'])
-    style_header(ws, 5 + len(bu_cols), head_row)
+    ncol = 7 + len(bu_cols)
+    ws.append(['Software', 'หมวด', 'ลิขสิทธิ์'] + bu_cols +
+              ['รวม (ใช้)', 'ซื้อไว้', 'เหลือ / เกิน', 'ใช้ในชุดรวม (ไม่นับ)'])
+    style_header(ws, ncol, head_row)
     for n in sw_keys:
         m = meta[n]
+        used  = sum(cnt[(n, b)] for b in bu_cols)
+        seats = seats_of.get(n)
         ws.append([n + (' [ชุดรวม]' if m['is_bundle'] else ''), m['category'] or '',
                    LIC.get(m['license_type'], m['license_type'] or '')] +
                   [cnt[(n, b)] or '' for b in bu_cols] +
-                  [sum(cnt[(n, b)] for b in bu_cols), cov[n] or ''])
+                  [used, '' if seats is None else seats, seat_diff(seats, used), cov[n] or ''])
+        if str(ws.cell(row=ws.max_row, column=ncol - 1).value).startswith('เกิน'):
+            ws.cell(row=ws.max_row, column=ncol - 1).font = Font(bold=True, color='DC2626')
     total_row = ws.max_row + 1
+    seat_known = [seats_of[n] for n in sw_keys if seats_of.get(n) is not None]
     ws.append(['รวมทุก Software', '', ''] +
-              [sum(cnt[(n, b)] for n in sw_keys) for b in bu_cols] + [n_lic, sum(cov.values()) or ''])
-    for c in range(1, 6 + len(bu_cols)):
+              [sum(cnt[(n, b)] for n in sw_keys) for b in bu_cols] +
+              [n_lic, sum(seat_known) if seat_known else '',
+               f'ระบุจำนวนซื้อแล้ว {len(seat_known)}/{len(sw_keys)} รายการ',
+               sum(cov.values()) or ''])
+    for c in range(1, ncol + 1):
         ws.cell(row=total_row, column=c).font = Font(bold=True)
         ws.cell(row=total_row, column=c).fill = SUBFIL
-    for row in ws.iter_rows(min_row=head_row, max_row=total_row, max_col=5 + len(bu_cols)):
+    for row in ws.iter_rows(min_row=head_row, max_row=total_row, max_col=ncol):
         for cell in row:
             cell.border = BORDER
             if cell.column > 3:
@@ -3060,7 +3223,7 @@ def software_export():
         few_prod = {p: q for p, q in sorted(few_prod.items(), key=lambda kv: (-kv[1], kv[0].lower())) if q}
 
         wsg = wb.create_sheet('แผนต่ออายุ')
-        wsg.append([f'แผนต่ออายุ license {vendor}'])
+        wsg.append([f'แผนต่ออายุ license {vendor}' + (f' — {", ".join(bu_f)}' if bu_f else '')])
         wsg['A1'].font = Font(bold=True, size=13)
         wsg.append([f'All Apps = คนที่ถือชุด All Apps อยู่ หรือใช้ตั้งแต่ {rule["min"]} ตัวขึ้นไป'
                     + (f' (ไม่นับ {", ".join(rule["exclude"])})' if rule['exclude'] else '')
@@ -3070,14 +3233,27 @@ def software_export():
 
         # จำนวนที่ซื้อไว้ตามคลัง — เทียบกับที่ต้องใช้ (ว่าง = ยังไม่ได้ระบุในคลัง)
         conn = get_db()
-        vcat = [c for c in conn.execute(
-            'SELECT name, vendor, is_bundle, seats FROM software_catalog').fetchall()
+        vcat = [dict(c) for c in conn.execute(
+            'SELECT id, name, vendor, is_bundle, seats FROM software_catalog').fetchall()
             if _vendor_of(c).lower() == vendor.lower()]
+        if bu_f:   # เลือก BU → ใช้จำนวนซื้อของ BU นั้น
+            per = defaultdict(list)
+            for r in conn.execute(
+                    f"SELECT software_id, seats FROM software_bu_seats WHERE seats IS NOT NULL "
+                    f"AND bu_code IN ({','.join('?' * len(bu_f))})", bu_f):
+                per[r['software_id']].append(r['seats'])
+            for c in vcat:
+                c['seats'] = sum(per[c['id']]) if per[c['id']] else None
         conn.close()
         b_cat   = [c for c in vcat if c['is_bundle']]
         b_seats = (sum(c['seats'] for c in b_cat if c['seats'] is not None)
                    if any(c['seats'] is not None for c in b_cat) else None)
         s_seats = {c['name']: c['seats'] for c in vcat if not c['is_bundle']}
+        # ตัวที่ซื้อไว้แต่ตอนนี้ไม่ต้องใช้แยกเลย (เช่นทุกคนอยู่ใน All Apps) ก็ต้องโชว์ ยอดซื้อจะได้ครบ
+        plan_items = dict(few_prod)
+        for n, st in sorted(s_seats.items(), key=lambda kv: kv[0].lower()):
+            if st and n not in plan_items:
+                plan_items[n] = 0
 
         def diff(seats, need):
             if seats is None:
@@ -3096,21 +3272,39 @@ def software_export():
                                                if len(cc_emp) > n_has else '')])
         wsg.cell(row=wsg.max_row, column=1).font = Font(bold=True)
         wsg.cell(row=wsg.max_row, column=2).font = Font(bold=True, color='DC2626')
-        for p, q in few_prod.items():
+        for p, q in plan_items.items():
             st = s_seats.get(p)
-            wsg.append([p, q, '' if st is None else st, diff(st, q), f'{q} คน'])
+            wsg.append([p, q, '' if st is None else st, diff(st, q),
+                        f'{q} คน' if q else 'ไม่มีคนต้องใช้แยก'])
         for r_ in range(head + 1, wsg.max_row + 1):
             if str(wsg.cell(row=r_, column=4).value or '').startswith('ขาด'):
                 wsg.cell(row=r_, column=4).font = Font(bold=True, color='DC2626')
+        # ยอดรวมซื้อไว้ — ถ้ายังมีรายการที่ไม่ได้ระบุจำนวนซื้อ จะไม่สรุปขาด/เหลือ (ตัวเลขไม่ครบ)
+        def total(items):
+            # ไม่มีคนต้องใช้และไม่ได้ซื้อ (เช่น BU ที่ไม่มี All Apps) ไม่ต้องนับว่า "ยังไม่ระบุ"
+            items = [(q, st) for q, st in items if q or st is not None]
+            known = [st for _, st in items if st is not None]
+            need  = sum(q for q, _ in items)
+            if not known:
+                return '', 'ยังไม่ได้ระบุจำนวนซื้อ'
+            if len(known) < len(items):
+                return sum(known), f'ระบุจำนวนซื้อแล้ว {len(known)}/{len(items)} รายการ'
+            return sum(known), diff(sum(known), need)
+        singles = [(q, s_seats.get(p)) for p, q in plan_items.items()]
+        s_tot, s_diff = total(singles)
+        a_tot, a_diff = total([(len(cc_emp), b_seats)] + singles)
+
         srow = wsg.max_row + 1
-        wsg.append(['รวมตัวแยก', sum(few_prod.values()), '', '',
+        wsg.append(['รวมตัวแยก', sum(few_prod.values()), s_tot, s_diff,
                     f'{len(few_emp)} คนที่ใช้ไม่ถึง {rule["min"]} ตัว'])
-        wsg.append(['รวมทั้งหมด', len(cc_emp) + sum(few_prod.values()), '', '',
+        wsg.append(['รวมทั้งหมด', len(cc_emp) + sum(few_prod.values()), a_tot, a_diff,
                     f'{len(cc_emp)} All Apps + {sum(few_prod.values())} ตัวแยก'])
         for r_ in (srow, srow + 1):
             for c_ in range(1, 6):
                 wsg.cell(row=r_, column=c_).font = Font(bold=True)
                 wsg.cell(row=r_, column=c_).fill = SUBFIL
+            if str(wsg.cell(row=r_, column=4).value or '').startswith('ขาด'):
+                wsg.cell(row=r_, column=4).font = Font(bold=True, color='DC2626')
         for row in wsg.iter_rows(min_row=head, max_row=srow + 1, max_col=5):
             for cell in row:
                 cell.border = BORDER
@@ -3154,12 +3348,13 @@ def software_export():
 
     # ── ชีท 3: ในคลังแต่ยังไม่มีใครถือ ─────────────────────────────
     ws3 = wb.create_sheet('ยังไม่มีผู้ถือครอง')
-    ws3.append(['Software', 'หมวด', 'ผู้ผลิต', 'ลิขสิทธิ์', 'สถานะในคลัง'])
-    style_header(ws3, 5)
+    ws3.append(['Software', 'หมวด', 'ผู้ผลิต', 'ลิขสิทธิ์', 'สถานะในคลัง', 'ซื้อไว้'])
+    style_header(ws3, 6)
     for c in unused:
         ws3.append([c['name'], c['category'] or '', c['vendor'] or '',
                     LIC.get(c['license_type'], c['license_type'] or ''),
-                    'เปิดใช้งาน' if c['is_active'] else 'ปิดใช้งาน'])
+                    'เปิดใช้งาน' if c['is_active'] else 'ปิดใช้งาน',
+                    '' if c['seats'] is None else c['seats']])
     ws3.freeze_panes = 'A2'
     autosize(ws3)
 
@@ -3169,6 +3364,223 @@ def software_export():
     fname = f"software_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                      as_attachment=True, download_name=fname)
+
+
+# ---------- บริหาร Printer ----------
+
+PRINTER_FIELDS = ['brand', 'model', 'building', 'serial_no', 'ink_type', 'ppm',
+                  'purchase_year', 'paper', 'price_old', 'price_new',
+                  'contract_start', 'contract_end', 'note']
+PRINTER_SOON_DAYS = 90     # สัญญาเหลือไม่เกินกี่วันถือว่า "ใกล้หมด"
+
+
+def _printer_clean(d):
+    """แปลงค่าจากฟอร์มให้พร้อมบันทึก — คืน (dict, error)"""
+    out = {}
+    for f in ['brand', 'model', 'building', 'serial_no', 'ink_type', 'paper', 'note']:
+        out[f] = re.sub(r'\s+', ' ', str(d.get(f) or '')).strip()
+    out['ppm'] = _int_or_none(d.get('ppm'))
+    y = _int_or_none(d.get('purchase_year'))
+    if y is not None and y > 2400:          # กรอกเป็น พ.ศ. → เก็บเป็น ค.ศ.
+        y -= 543
+    if y is not None and not (1980 <= y <= date.today().year + 1):
+        return None, 'ปีที่ซื้อไม่ถูกต้อง (กรอกเป็น พ.ศ. หรือ ค.ศ. ก็ได้)'
+    out['purchase_year'] = y
+    for f in ['price_old', 'price_new']:
+        v = _float_or_none(d.get(f))
+        if v is not None and v < 0:
+            return None, 'ค่าสำเนาต้องไม่ติดลบ'
+        out[f] = v
+    for f in ['contract_start', 'contract_end']:
+        v = (d.get(f) or '').strip()
+        if v and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', v):
+            return None, 'วันที่สัญญาไม่ถูกต้อง'
+        out[f] = v or None
+    if out['contract_start'] and out['contract_end'] and out['contract_end'] < out['contract_start']:
+        return None, 'วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มต้น'
+    if not (out['brand'] or out['model'] or out['serial_no']):
+        return None, 'กรอกอย่างน้อย ยี่ห้อ รุ่น หรือเลขเครื่อง'
+    return out, None
+
+
+def _printer_row(r):
+    """เติมค่าที่คำนวณได้: อายุการใช้งาน, % ราคาเปลี่ยน, สถานะสัญญา"""
+    d = dict(r)
+    today = date.today()
+    d['age_years'] = (today.year - d['purchase_year']) if d['purchase_year'] else None
+    po, pn = d['price_old'], d['price_new']
+    d['change_pct'] = round((pn - po) / po * 100, 2) if po and pn is not None else None
+    status, days = 'none', None
+    if d['contract_end']:
+        days = (date.fromisoformat(d['contract_end']) - today).days
+        status = 'expired' if days < 0 else ('soon' if days <= PRINTER_SOON_DAYS else 'active')
+    d['contract_status'], d['days_left'] = status, days
+    return d
+
+
+def _printer_dup(conn, serial, pid=None):
+    if not serial:
+        return None
+    return conn.execute(
+        'SELECT id FROM printers WHERE serial_no=? COLLATE NOCASE AND id<>?',
+        (serial, pid or 0)).fetchone()
+
+
+@app.route('/api/printers', methods=['GET'])
+def printers_list():
+    """รายการเครื่องทั้งหมด + ตัวเลขสรุปสำหรับหน้า dashboard"""
+    conn = get_db()
+    rows = [_printer_row(r) for r in conn.execute(
+        'SELECT * FROM printers ORDER BY building COLLATE NOCASE, brand COLLATE NOCASE, '
+        'model COLLATE NOCASE')]
+    conn.close()
+
+    ages = [r['age_years'] for r in rows if r['age_years'] is not None]
+    pcts = [r['change_pct'] for r in rows if r['change_pct'] is not None]
+    by_building = Counter(r['building'] or 'ไม่ระบุอาคาร' for r in rows)
+    return jsonify({
+        'rows': rows,
+        'summary': {
+            'total':       len(rows),
+            'avg_age':     round(sum(ages) / len(ages), 1) if ages else None,
+            'old_5y':      sum(1 for a in ages if a >= 5),
+            'expired':     sum(1 for r in rows if r['contract_status'] == 'expired'),
+            'soon':        sum(1 for r in rows if r['contract_status'] == 'soon'),
+            'no_contract': sum(1 for r in rows if r['contract_status'] == 'none'),
+            'avg_change':  round(sum(pcts) / len(pcts), 2) if pcts else None,
+            'up':          sum(1 for p in pcts if p > 0),
+            'down':        sum(1 for p in pcts if p < 0),
+            'soon_days':   PRINTER_SOON_DAYS,
+        },
+        'by_building': sorted(by_building.items(), key=lambda kv: (-kv[1], kv[0])),
+    })
+
+
+@app.route('/api/printers', methods=['POST'])
+def printers_add():
+    d, err = _printer_clean(request.json or {})
+    if err:
+        return jsonify({'error': err}), 400
+    conn = get_db()
+    if _printer_dup(conn, d['serial_no']):
+        conn.close()
+        return jsonify({'error': f'เลขเครื่อง "{d["serial_no"]}" มีอยู่แล้ว'}), 409
+    cur = conn.execute(
+        f'INSERT INTO printers ({", ".join(PRINTER_FIELDS)}) '
+        f'VALUES ({", ".join("?" * len(PRINTER_FIELDS))})',
+        [d[f] for f in PRINTER_FIELDS])
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return jsonify({'ok': True, 'id': new_id})
+
+
+@app.route('/api/printers/<int:pid>', methods=['PUT'])
+def printers_update(pid):
+    d, err = _printer_clean(request.json or {})
+    if err:
+        return jsonify({'error': err}), 400
+    conn = get_db()
+    if _printer_dup(conn, d['serial_no'], pid):
+        conn.close()
+        return jsonify({'error': f'เลขเครื่อง "{d["serial_no"]}" มีอยู่แล้ว'}), 409
+    cur = conn.execute(
+        f'UPDATE printers SET {", ".join(f + "=?" for f in PRINTER_FIELDS)}, '
+        f"updated_at=datetime('now','localtime') WHERE id=?",
+        [d[f] for f in PRINTER_FIELDS] + [pid])
+    conn.commit()
+    changed = cur.rowcount
+    conn.close()
+    if not changed:
+        return jsonify({'error': 'ไม่พบเครื่องนี้'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/printers/<int:pid>', methods=['DELETE'])
+def printers_delete(pid):
+    conn = get_db()
+    row = conn.execute('SELECT * FROM printers WHERE id=?', (pid,)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'error': 'ไม่พบเครื่องนี้'}), 404
+    conn.execute('DELETE FROM printers WHERE id=?', (pid,))
+    conn.commit()
+    conn.close()
+    app.logger.warning('ลบ printer id=%s: %s', pid, json.dumps(dict(row), ensure_ascii=False))
+    return jsonify({'ok': True})
+
+
+@app.route('/api/printers/export', methods=['GET'])
+def printers_export():
+    """Export รายการ Printer เป็น Excel — คอลัมน์ตามที่หน้าจอแสดง"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    conn = get_db()
+    rows = [_printer_row(r) for r in conn.execute(
+        'SELECT * FROM printers ORDER BY building COLLATE NOCASE, brand COLLATE NOCASE, '
+        'model COLLATE NOCASE')]
+    conn.close()
+
+    ST = {'expired': 'หมดสัญญาแล้ว', 'soon': 'ใกล้หมดสัญญา', 'active': 'อยู่ในสัญญา',
+          'none': 'ไม่ระบุสัญญา'}
+    th = lambda s: (f'{s[8:10]}/{s[5:7]}/{int(s[:4]) + 543}' if s else '')
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Printer'
+    ws.append(['รายการ Printer / เครื่องถ่ายเอกสาร'])
+    ws['A1'].font = Font(bold=True, size=13)
+    ws.append([f'ออกรายงานเมื่อ {datetime.now().strftime("%d/%m/%Y %H:%M น.")}  ·  รวม {len(rows)} เครื่อง'])
+    ws['A2'].font = Font(size=9, color='64748B')
+    ws.append([])
+    headers = ['ยี่ห้อ', 'รุ่น', 'อาคารที่ตั้ง', 'เลขเครื่อง', 'ชนิดหมึก', 'สำเนา/นาที',
+               'ปีที่ซื้อ (พ.ศ.)', 'อายุการใช้งาน (ปี)', 'กระดาษที่ใช้',
+               'ค่าสำเนาราคาเดิม (บาท)', 'ค่าสำเนาราคาใหม่ (บาท)', 'เพิ่ม/ลด (%)',
+               'สัญญาเริ่มต้น', 'สัญญาสิ้นสุด', 'สถานะสัญญา', 'เหลือ (วัน)', 'หมายเหตุ']
+    head = ws.max_row + 1
+    ws.append(headers)
+    HFILL = PatternFill('solid', fgColor='1E3A5F')
+    THIN = Side(style='thin', color='D8DEE7')
+    BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+    for c in range(1, len(headers) + 1):
+        cell = ws.cell(row=head, column=c)
+        cell.font = Font(color='FFFFFF', bold=True, size=10)
+        cell.fill = HFILL
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    for r in rows:
+        ws.append([
+            r['brand'], r['model'], r['building'], r['serial_no'], r['ink_type'], r['ppm'],
+            r['purchase_year'] + 543 if r['purchase_year'] else None, r['age_years'], r['paper'],
+            r['price_old'], r['price_new'], r['change_pct'],
+            th(r['contract_start']), th(r['contract_end']), ST[r['contract_status']],
+            r['days_left'] if r['contract_status'] in ('soon', 'active') else None, r['note'],
+        ])
+        n = ws.max_row
+        if r['change_pct'] is not None:
+            ws.cell(row=n, column=12).font = Font(
+                bold=True, color='DC2626' if r['change_pct'] > 0 else '15803D')
+        if r['contract_status'] in ('expired', 'soon'):
+            ws.cell(row=n, column=15).font = Font(
+                bold=True, color='DC2626' if r['contract_status'] == 'expired' else 'B45309')
+    for row in ws.iter_rows(min_row=head, max_row=ws.max_row, max_col=len(headers)):
+        for cell in row:
+            cell.border = BORDER
+            if cell.row > head and cell.column in (10, 11):
+                cell.number_format = '#,##0.00'
+    ws.freeze_panes = ws.cell(row=head + 1, column=3)
+    ws.auto_filter.ref = f'A{head}:{get_column_letter(len(headers))}{ws.max_row}'
+    for i, h in enumerate(headers, 1):
+        width = max([len(h)] + [len(str(ws.cell(row=r_, column=i).value or ''))
+                                for r_ in range(head + 1, ws.max_row + 1)])
+        ws.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 9), 36)
+
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name=f"printers_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
+                     mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
 
 @app.route('/api/assets/report.pdf', methods=['GET'])
