@@ -3950,7 +3950,7 @@ def _ed_read_status() -> dict:
         return {'running': False, 'done': False, 'error': None, 'count': 0, 'total': 0}
 
 EDEVICE_LOGIN_URL  = 'http://amarin.intra/webappl/acorporate/index.aspx?s=out'
-EDEVICE_CORP_URL   = 'http://www.amarin.intra/webappl/eDevice_ATV/***REMOVED-EDEVICE_INIT_PATH***'
+EDEVICE_CORP_URL   = 'http://www.amarin.intra/webappl/eDevice_ATV/' + os.environ.get('EDEVICE_INIT_PATH', '')
 EDEVICE_DETAIL_URL     = 'http://www.amarin.intra/webappl/eDevice_ATV/ComputerDetail.asp?id={}'
 EDEVICE_MAC_DETAIL_URL = 'http://www.amarin.intra/webappl/eDevice_ATV/MacintoshDetail.asp?id={}'
 EDEVICE_LIST_URL       = 'http://www.amarin.intra/webappl/eDevice_ATV/Computer1.asp'

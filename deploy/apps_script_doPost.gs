@@ -2,7 +2,7 @@ const SHEET_NAME = 'Sheet1';   // ⚠️ แก้เป็นชื่อแท
 
 function doPost(e) {
   const data = JSON.parse(e.postData.contents);
-  const ss    = SpreadsheetApp.openById('***REMOVED-SHEETS_ID***');
+  const ss    = SpreadsheetApp.openById('ใส่_SHEET_ID_ที่นี่');
   const sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet) {
     return ContentService.createTextOutput(JSON.stringify(
@@ -52,6 +52,6 @@ function doPost(e) {
 }
 
 function testAuth() {
-  const sheet = SpreadsheetApp.openById('***REMOVED-SHEETS_ID***');
+  const sheet = SpreadsheetApp.openById('ใส่_SHEET_ID_ที่นี่');
   Logger.log(sheet.getName());
 }
