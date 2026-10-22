@@ -290,8 +290,8 @@ async function loadFilters() {
   const modalBuSel = document.getElementById('f-bu-code');
   data.bus.forEach(b => {
     buMap[b.bu_code] = b.bu;
-    buSel.insertAdjacentHTML('beforeend', `<option value="${b.bu_code}">${b.bu_code} – ${b.bu}</option>`);
-    modalBuSel.insertAdjacentHTML('beforeend', `<option value="${b.bu_code}" data-bu="${b.bu}">${b.bu_code} – ${b.bu}</option>`);
+    buSel.insertAdjacentHTML('beforeend', `<option value="${esc(b.bu_code)}">${esc(b.bu_code)} – ${esc(b.bu)}</option>`);
+    modalBuSel.insertAdjacentHTML('beforeend', `<option value="${esc(b.bu_code)}" data-bu="${esc(b.bu)}">${esc(b.bu_code)} – ${esc(b.bu)}</option>`);
   });
   const deptSel = document.getElementById('filter-dept');
   const deptList = document.getElementById('dept-list');
@@ -346,12 +346,12 @@ async function loadEmployees() {
         <td>${esc(e.position)}</td>
         <td style="color:#2563eb">${e.email ? `<a href="mailto:${esc(e.email)}" style="color:#2563eb;text-decoration:none">${esc(e.email)}</a>` : ''}</td>
         <td><span class="status-badge status-${e.status}">${e.status === 'active' ? 'Active' : 'Inactive'}</span></td>
-        <td style="text-align:center">${assetEmpMap[e.id] ? `<span class="asset-badge" onclick="showAssetDetail(${e.id},'${esc(e.name)}')" title="เครื่องที่ใช้งานอยู่ ${assetEmpMap[e.id]} เครื่อง (สถานะ Active)">💻 ${assetEmpMap[e.id]}</span>` : ''}</td>
+        <td style="text-align:center">${assetEmpMap[e.id] ? `<span class="asset-badge" onclick="showAssetDetail(${e.id},${jsq(e.name)})" title="เครื่องที่ใช้งานอยู่ ${assetEmpMap[e.id]} เครื่อง (สถานะ Active)">💻 ${assetEmpMap[e.id]}</span>` : ''}</td>
         <td class="sw-cell" data-emp="${e.id}" data-name="${esc(e.name)}">${swCellHtml(e.id, e.name)}</td>
         <td>
           <div class="action-btns">
             <button class="icon-btn edit" onclick="editEmployee(${e.id})" title="แก้ไข">✏️</button>
-            <button class="icon-btn del" onclick="deleteEmployee(${e.id}, '${esc(e.name)}')" title="ลบ">🗑️</button>
+            <button class="icon-btn del" onclick="deleteEmployee(${e.id}, ${jsq(e.name)})" title="ลบ">🗑️</button>
           </div>
         </td>
       </tr>
@@ -526,7 +526,7 @@ async function loadStats() {
   const maxBu = Math.max(...d.by_bu.map(b => b.cnt), 1);
   document.getElementById('bu-bars').innerHTML = d.by_bu.map(b => `
     <div class="bar-row">
-      <div class="bar-label" title="${b.bu}" style="width:56px;min-width:56px;text-align:right">${b.bu_code}</div>
+      <div class="bar-label" title="${esc(b.bu)}" style="width:56px;min-width:56px;text-align:right">${esc(b.bu_code)}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${(b.cnt/maxBu*100).toFixed(1)}%"></div></div>
       <div class="bar-count">${b.cnt}</div>
     </div>
@@ -535,7 +535,7 @@ async function loadStats() {
   const maxDept = Math.max(...d.by_dept.map(b => b.cnt), 1);
   document.getElementById('dept-bars').innerHTML = d.by_dept.map(b => `
     <div class="bar-row">
-      <div class="bar-label" title="${b.department}" style="width:200px;min-width:200px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.department}</div>
+      <div class="bar-label" title="${esc(b.department)}" style="width:200px;min-width:200px;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.department)}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${(b.cnt/maxDept*100).toFixed(1)}%"></div></div>
       <div class="bar-count">${b.cnt}</div>
     </div>
@@ -568,7 +568,7 @@ async function loadAssetMeta() {
   // populate BU filter from existing buMap (loaded with employees)
   const buSel = document.getElementById('a-filter-bu');
   Object.entries(buMap).forEach(([code, name]) => {
-    buSel.insertAdjacentHTML('beforeend', `<option value="${code}">${code}</option>`);
+    buSel.insertAdjacentHTML('beforeend', `<option value="${esc(code)}">${esc(code)}</option>`);
   });
 
   // wire up filter events (fetch ใหม่เมื่อ filter เปลี่ยน)
@@ -735,7 +735,7 @@ function renderAssetTable(d) {
   window._filterClearFns = filterTagCfg.map(f => f.clear);
   const tagsHtml = filterTagCfg.map((f, i) =>
     `<span class="ri-filter-tag" onclick="window._filterClearFns[${i}]();renderAssetTable(window._lastAssetData)" title="คลิกเพื่อยกเลิก filter นี้">
-      ${f.label} <span style="margin-left:3px;font-size:.7rem;opacity:.7">×</span>
+      ${esc(f.label)} <span style="margin-left:3px;font-size:.7rem;opacity:.7">×</span>
     </span>`
   ).join('');
 
@@ -872,7 +872,7 @@ function renderEmpFilterInfo(showing, total) {
   document.getElementById('result-info').innerHTML =
     `<span><span class="ri-count">${showing.toLocaleString()}</span> จาก ${total.toLocaleString()} รายการ</span>` +
     chips.map(([k, label]) =>
-      `<span class="ri-filter-tag" onclick="clearEmpFilter('${k}')" title="คลิกเพื่อยกเลิกตัวกรองนี้">
+      `<span class="ri-filter-tag" onclick="clearEmpFilter(${jsq(k)})" title="คลิกเพื่อยกเลิกตัวกรองนี้">
          ${esc(label)} ✕</span>`).join('');
 
   const btn = document.getElementById('emp-reset-btn');
@@ -1003,7 +1003,7 @@ async function showAssetDetail(empId, empName, showAll) {
         ? `แสดงทุกเครื่อง — มี ${active.length} เครื่อง Active และ ${hidden.length} เครื่องสถานะอื่น`
         : `แสดงเฉพาะเครื่อง Active · ซ่อน ${hidden.length} เครื่อง
            (${Object.entries(byStatus).map(([k, n]) => `${LBL[k] || k} ${n}`).join(' · ')})`}</span>
-      <button class="btn-sm" onclick="showAssetDetail(${empId},'${esc(empName).replace(/'/g, '&#39;')}',${!showAll})">
+      <button class="btn-sm" onclick="showAssetDetail(${empId},${jsq(empName)},${!showAll})">
         ${showAll ? 'แสดงเฉพาะ Active' : 'แสดงทั้งหมด'}
       </button>
     </div>`;
@@ -1111,10 +1111,10 @@ async function loadSwCatalogData(includeInactive, bu) {
 
 function swCellHtml(empId, empName) {
   const n = swEmpMap[empId] || 0;
-  const safeName = esc(empName).replace(/'/g, '&#39;');
+  const safeName = jsq(empName);
   return n
-    ? `<span class="sw-badge" onclick="openSoftware(${empId},'${safeName}')" title="ดู/แก้ไข Software ${n} รายการ">🧩 ${n} รายการ</span>`
-    : `<button class="sw-add-btn" onclick="openSoftware(${empId},'${safeName}')" title="เพิ่ม Software">+ เพิ่ม</button>`;
+    ? `<span class="sw-badge" onclick="openSoftware(${empId},${safeName})" title="ดู/แก้ไข Software ${n} รายการ">🧩 ${n} รายการ</span>`
+    : `<button class="sw-add-btn" onclick="openSoftware(${empId},${safeName})" title="เพิ่ม Software">+ เพิ่ม</button>`;
 }
 
 /** อัปเดตเฉพาะช่อง Software ในตาราง โดยไม่ต้องโหลดพนักงานใหม่ */
@@ -1469,7 +1469,7 @@ function renderSwcBuTabs() {
   const tabs = [{ bu_code: '', bu: 'รวมทุก BU' }, ...swcBuList];
   document.getElementById('swc-bu-tabs').innerHTML = tabs.map(b => `
     <button class="swc-bu-tab${swcBu === b.bu_code ? ' active' : ''}"
-            onclick="switchSwcBu('${esc(b.bu_code)}')" title="${esc(b.bu || '')}">
+            onclick="switchSwcBu(${jsq(b.bu_code)})" title="${esc(b.bu || '')}">
       ${b.bu_code ? esc(b.bu_code) : 'รวมทุก BU'}</button>`).join('');
   document.getElementById('swc-bu-note').innerHTML = swcBu
     ? `กำลังดูของ <b>${esc(swcBu)}</b> — จำนวนที่ซื้อ / วันต่ออายุ / ราคา และยอดใช้ เป็นของ ${esc(swcBu)} เท่านั้น`
@@ -2029,7 +2029,7 @@ function renderResolution(a, resLabel, resClass) {
   if (!isExpired) return '<span style="color:#cbd5e1;font-size:.75rem">—</span>';
   return `<div style="display:flex;align-items:center;gap:4px">
     <span class="resolution-badge ${cls}">${label}</span>
-    <button class="edit-res-btn" onclick='openResolutionModal(${assetJson})' title="แก้ไข">✏️</button>
+    <button class="edit-res-btn" onclick="openResolutionModal(${assetJson})" title="แก้ไข">✏️</button>
   </div>`;
 }
 
@@ -2451,10 +2451,10 @@ async function loadRentalDashboard() {
       const expandId  = `tl-expand-${expandKey.replace(/[|-]/g,'_')}`;
       return `<div class="timeline-col" style="position:relative">
         <div class="timeline-bar-wrap" style="height:${BAR_AREA}px;align-items:flex-end;display:flex;width:100%">
-          <div class="timeline-bar" data-expand="${expandId}" data-key="${expandKey}" data-bu="${buKey}"
+          <div class="timeline-bar" data-expand="${expandId}" data-key="${esc(expandKey)}" data-bu="${esc(buKey)}"
                style="height:${h}px;background:${color};width:100%;position:relative;cursor:pointer;transition:opacity .15s"
                onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'"
-               onclick="toggleTimelineExpand(this, '${expandKey}', '${buKey}')">
+               onclick="toggleTimelineExpand(this, ${jsq(expandKey)}, ${jsq(buKey)})">
             <span style="position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-size:.65rem;font-weight:700;color:#1e293b;white-space:nowrap">${t.count}</span>
           </div>
         </div>
@@ -2495,7 +2495,7 @@ async function loadRentalDashboard() {
     return `<div style="margin-top:16px;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;background:#fafafa">
       <div style="font-size:.8rem;font-weight:700;color:${color};margin-bottom:6px">
         <span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:50%;margin-right:5px"></span>
-        ${b.bu_code} <span style="font-weight:400;color:#94a3b8;margin-left:6px">${total} เครื่อง</span>
+        ${esc(b.bu_code)} <span style="font-weight:400;color:#94a3b8;margin-left:6px">${total} เครื่อง</span>
       </div>
       <div style="overflow-x:auto;padding-top:20px">
         <div class="timeline-wrap" style="padding-bottom:4px">${cols}</div>
@@ -2519,7 +2519,7 @@ async function loadRentalDashboard() {
         const buLabel = b.bu_code === '—' ? 'ไม่ระบุ BU' : b.bu_code;
         const color = BU_COLOR[b.bu_code] || '#94a3b8';
         const safeId = b.bu_code.replace(/[^a-zA-Z0-9]/g,'_');
-        return `<div class="bar-row" style="margin-bottom:6px;cursor:pointer" onclick="toggleNoTimelineDetail('${esc(b.bu_code)}','${safeId}')" title="คลิกเพื่อดูรายการเครื่อง">
+        return `<div class="bar-row" style="margin-bottom:6px;cursor:pointer" onclick="toggleNoTimelineDetail(${jsq(b.bu_code)},${jsq(safeId)})" title="คลิกเพื่อดูรายการเครื่อง">
           <div class="bar-label" style="width:110px;min-width:110px;text-align:right;font-weight:600;color:${color}">${esc(buLabel)} ▾</div>
           <div class="bar-track" style="flex:1"><div class="bar-fill" style="width:${(b.count/maxNtl*100).toFixed(1)}%;background:${color}"></div></div>
           <div class="bar-count" style="min-width:36px">${b.count}</div>
@@ -2675,7 +2675,7 @@ function toggleTimelineExpand(barEl, key, bu) {
   wrap.innerHTML = `
     <div style="margin-top:10px;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;background:#fff">
       <div style="padding:8px 12px;background:#f1f5f9;font-size:.78rem;font-weight:600;color:#334155;display:flex;justify-content:space-between;align-items:center">
-        <span>📋 ${monthLabel}${bu !== 'ALL' ? ' · ' + bu : ''} — ${rows.length} เครื่อง</span>
+        <span>📋 ${esc(monthLabel)}${bu !== 'ALL' ? ' · ' + esc(bu) : ''} — ${rows.length} เครื่อง</span>
         <span style="cursor:pointer;color:#94a3b8;font-size:1rem" onclick="this.closest('[id^=tl-expand]').innerHTML='';this.closest('[id^=tl-expand]').dataset.openKey='';document.querySelectorAll('.timeline-bar').forEach(b=>b.style.outline='')">✕</span>
       </div>
       <div style="overflow-x:auto">
@@ -2852,7 +2852,7 @@ async function toggleSwHolders(cid, rowEl) {
                 <td style="${TD};font-family:monospace;color:#94a3b8;width:70px">${esc(h.emp_code) || '—'}</td>
                 <td style="${TD};font-weight:600;color:#1e293b">
                   ${h.emp_id
-                    ? `<a href="#" onclick="openSoftware(${h.emp_id},'${esc(h.emp_name).replace(/'/g, '&#39;')}');return false" style="color:#1e293b;text-decoration:none;border-bottom:1px dotted #cbd5e1">${esc(h.emp_name)}</a>`
+                    ? `<a href="#" onclick="openSoftware(${h.emp_id},${jsq(h.emp_name)});return false" style="color:#1e293b;text-decoration:none;border-bottom:1px dotted #cbd5e1">${esc(h.emp_name)}</a>`
                     : '<span style="color:#ef4444">(ไม่พบใน HR)</span>'}
                   ${h.status && h.status !== 'active'
                     ? '<span class="sw-tag del" style="margin-left:6px">Inactive</span>' : ''}
@@ -2940,7 +2940,7 @@ function renderSwDashInactive() {
               <td style="${TD};font-family:monospace;color:#94a3b8">${esc(r.emp_code) || '—'}</td>
               <td style="${TD};font-weight:600">
                 ${r.emp_id
-                  ? `<a href="#" onclick="openSoftware(${r.emp_id},'${esc(r.emp_name).replace(/'/g, '&#39;')}');return false" style="color:#1e293b;text-decoration:none;border-bottom:1px dotted #cbd5e1">${esc(r.emp_name)}</a>`
+                  ? `<a href="#" onclick="openSoftware(${r.emp_id},${jsq(r.emp_name)});return false" style="color:#1e293b;text-decoration:none;border-bottom:1px dotted #cbd5e1">${esc(r.emp_name)}</a>`
                   : '<span style="color:#ef4444">(ไม่พบใน HR)</span>'}
               </td>
               <td style="${TD}"><span class="bu-badge bu-${esc(r.bu_code)}">${esc(r.bu_code) || '—'}</span></td>
@@ -3038,7 +3038,7 @@ function renderSwVendor() {
     const buOpen  = q ? true : !!svOpen[buKey];
     return `
     <div class="sv-bu">
-      <div class="sv-bu-head" onclick="toggleSv('${esc(buKey)}')">
+      <div class="sv-bu-head" onclick="toggleSv(${jsq(buKey)})">
         <span class="sv-caret">${buOpen ? '▾' : '▸'}</span>
         <span class="bu-badge bu-${esc(b.bu_code)}">${esc(b.bu_code)}</span>
         <span class="sv-bu-num"><b>${b.licenses.toLocaleString()}</b> license · ${b.people.toLocaleString()} คน · ${b.depts.length} ฝ่าย
@@ -3054,7 +3054,7 @@ function renderSwVendor() {
           d.products[y] - d.products[x] || x.localeCompare(y));
         return `
         <div class="sv-dept">
-          <div class="sv-dept-head" onclick="toggleSv('${esc(dKey).replace(/'/g, '&#39;')}')">
+          <div class="sv-dept-head" onclick="toggleSv(${jsq(dKey)})">
             <span class="sv-caret">${dOpen ? '▾' : '▸'}</span>
             <span class="sv-dept-name">${esc(d.department)}</span>
             <span class="sv-dept-num">${d.licenses.toLocaleString()} license · ${d.people.toLocaleString()} คน
@@ -3079,7 +3079,7 @@ function renderSwVendor() {
                   <tr>
                     <td class="sv-sticky">
                       ${p.emp_id
-                        ? `<a href="#" onclick="openSoftware(${p.emp_id},'${esc(p.name).replace(/'/g, '&#39;')}');return false">${esc(p.name)}</a>`
+                        ? `<a href="#" onclick="openSoftware(${p.emp_id},${jsq(p.name)});return false">${esc(p.name)}</a>`
                         : `<span style="color:#ef4444">${esc(p.name)}</span>`}
                       ${p.status && p.status !== 'active'
                         ? '<span class="sw-tag del">Inactive</span>' : ''}
@@ -4038,7 +4038,7 @@ function renderPrinters() {
   // แยกตามอาคาร — คลิกเพื่อกรอง
   document.getElementById('pr-buildings').innerHTML = printers.by_building.length > 1
     ? printers.by_building.map(([b, n]) => `
-        <span class="pr-bchip${bd === b ? ' on' : ''}" onclick="setPrinterBuilding('${esc(b).replace(/'/g, '&#39;')}')">
+        <span class="pr-bchip${bd === b ? ' on' : ''}" onclick="setPrinterBuilding(${jsq(b)})">
           ${esc(b)} <b>${n}</b></span>`).join('')
     : '';
 
@@ -4207,6 +4207,12 @@ async function api(url, method = 'GET', body) {
     throw err;
   }
   return res.json();
+}
+
+/** ค่าที่จะส่งเป็นอาร์กิวเมนต์ใน onclick="fn(...)" — JSON + escape HTML
+ *  (ห้ามใช้ '${esc(x)}' — เบราว์เซอร์แปลง &#39; กลับเป็น ' ก่อนรัน JS ทำให้หลุดออกจากสตริงได้) */
+function jsq(v) {
+  return esc(JSON.stringify(v == null ? '' : String(v)));
 }
 
 function esc(s) {

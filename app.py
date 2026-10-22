@@ -7,6 +7,34 @@ from urllib.parse import quote as _url_quote
 from report_pdf import _machine_rank, MACHINE_ORDER, _norm_machine
 
 app = Flask(__name__)
+# กันอัปโหลดไฟล์ใหญ่ผิดปกติ (ไฟล์ Excel นำเข้าใช้จริงไม่ถึง 1 MB)
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
+
+# Security headers — หน้าเว็บไม่โหลดอะไรจากภายนอกเลย จึงจำกัดไว้ที่ 'self'
+# ('unsafe-inline' ยังจำเป็นเพราะหน้าเว็บใช้ onclick="..." ในแท็ก)
+_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+        "font-src 'self' data:; connect-src 'self'; object-src 'none'; "
+        "base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+
+
+@app.after_request
+def _security_headers(resp):
+    h = resp.headers
+    h.setdefault('Content-Security-Policy', _CSP)
+    h.setdefault('X-Content-Type-Options', 'nosniff')
+    h.setdefault('X-Frame-Options', 'DENY')
+    h.setdefault('Referrer-Policy', 'same-origin')
+    h.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+    # ข้อมูลพนักงานไม่ควรค้างใน cache ของเบราว์เซอร์/proxy
+    if request.path.startswith('/api/'):
+        h.setdefault('Cache-Control', 'no-store')
+    return resp
+
+
+@app.errorhandler(413)
+def _too_large(_e):
+    return jsonify({'error': 'ไฟล์ใหญ่เกินไป (สูงสุด 20 MB)'}), 413
 DB = os.path.join(os.path.dirname(__file__), 'employees.db')
 
 
@@ -688,6 +716,23 @@ def get_stats():
         'by_dept': [dict(r) for r in by_dept]
     })
 
+def _xlsx_bytes(wb):
+    """บันทึก workbook เป็น BytesIO — ข้อมูลทุกช่องเป็นข้อความ/ตัวเลขเท่านั้น
+
+    กัน formula injection: ถ้ามีคนกรอกข้อมูลขึ้นต้นด้วย "=" ไว้ในระบบ openpyxl จะเขียนเป็นสูตร
+    แล้ว Excel จะรันตอนเปิดไฟล์ — บังคับให้เป็นข้อความธรรมดา (ระบบไม่ได้ใช้สูตรใน export เลย)
+    """
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                if cell.data_type == 'f':
+                    cell.data_type = 's'
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 @app.route('/api/export/excel', methods=['GET'])
 def export_excel():
     from openpyxl import Workbook
@@ -735,9 +780,7 @@ def export_excel():
     for col in ws.columns:
         ws.column_dimensions[col[0].column_letter].width = max(len(str(col[0].value or '')), 12)
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+    buf = _xlsx_bytes(wb)
     filename = f"employees_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                      as_attachment=True, download_name=filename)
@@ -780,7 +823,7 @@ def import_excel():
 
 # ---------- IT Assets (Google Sheets) ----------
 
-SHEETS_ID         = os.environ.get('SHEETS_ID', '***REMOVED-SHEETS_ID***')
+SHEETS_ID         = os.environ.get('SHEETS_ID', '')   # อยู่ใน .env — ว่าง = ไม่ดึงจาก Google Sheets
 SHEETS_URL        = f'https://docs.google.com/spreadsheets/d/{SHEETS_ID}/export?format=csv'
 SHEETS_SCRIPT_URL = os.environ.get('SHEETS_SCRIPT_URL', '')
 CACHE_TTL  = 1800  # 30 min
@@ -837,6 +880,8 @@ def fetch_assets_raw(force=False):
     # --- Step 2: Google Sheets → lookup by S/N เพื่อเอาข้อมูลสัญญา ---
     sheets_sn_map = {}   # serial_no.upper() → row dict
     try:
+        if not SHEETS_ID:
+            raise LookupError('ไม่ได้ตั้ง SHEETS_ID')
         resp = req_lib.get(SHEETS_URL, allow_redirects=True, timeout=15)
         resp.raise_for_status()
         resp.encoding = 'utf-8'
@@ -2232,7 +2277,8 @@ def sheets_update_info():
     try:
         data = fetch_assets_raw()
     except Exception as e:
-        return jsonify({'ok': False, 'error': f'โหลด asset ไม่ได้: {e}'}), 500
+        app.logger.exception('sheets_update_info: โหลด asset ไม่ได้')
+        return jsonify({'ok': False, 'error': 'โหลดข้อมูล asset ไม่ได้ (ดูรายละเอียดใน log)'}), 500
 
     # โหลด eDevice เพื่อดึง section (ฝ่าย) ซึ่งไม่ได้ expose ใน asset record ปกติ
     ed_section_map = {}   # serial_no.upper() → section
@@ -2302,7 +2348,9 @@ def sheets_update_info():
         result['skipped'] = len(skipped)
         return jsonify(result)
     except Exception as e:
-        return jsonify({'ok': False, 'error': str(e), 'sent': len(updates)}), 500
+        app.logger.exception('sheets_update_info: ส่งไป Apps Script ไม่สำเร็จ')
+        return jsonify({'ok': False, 'error': 'ส่งข้อมูลไป Google Sheets ไม่สำเร็จ (ดูรายละเอียดใน log)',
+                        'sent': len(updates)}), 500
 
 
 @app.route('/api/assets/export', methods=['GET'])
@@ -2351,8 +2399,7 @@ def export_assets():
         ws.column_dimensions[get_column_letter(col[0].column)].width = max(
             len(str(col[0].value or '')), 10)
 
-    buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    buf = _xlsx_bytes(wb)
     fname = f"it_assets_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                      as_attachment=True, download_name=fname)
@@ -2542,8 +2589,7 @@ def rental_export():
     ws2.freeze_panes = 'A2'
     autosize(ws2)
 
-    buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    buf = _xlsx_bytes(wb)
     tag = '_'.join(filter(None, ['-'.join(bu_f), '-'.join(year_f)])) or 'all'
     fname = f"rental_plan_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -3358,8 +3404,7 @@ def software_export():
     ws3.freeze_panes = 'A2'
     autosize(ws3)
 
-    buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    buf = _xlsx_bytes(wb)
     tag = '-'.join(bu_f) or 'all'
     fname = f"software_{tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
     return send_file(buf, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -3833,8 +3878,7 @@ def printers_export():
                                 for r_ in range(head + 1, ws.max_row + 1)])
         ws.column_dimensions[get_column_letter(i)].width = min(max(width + 2, 9), 36)
 
-    buf = io.BytesIO()
-    wb.save(buf); buf.seek(0)
+    buf = _xlsx_bytes(wb)
     return send_file(buf, as_attachment=True,
                      download_name=f"printers_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
                      mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
@@ -3918,7 +3962,7 @@ EDEVICE_BASES = [
     'http://www.amarin.intra/webappl/eDevice_ATV/',
     'http://www.amarin.intra/webappl/eDevice/',
 ]
-EDEVICE_INIT_PATH = '***REMOVED-EDEVICE_INIT_PATH***'
+EDEVICE_INIT_PATH = os.environ.get('EDEVICE_INIT_PATH', '')   # อยู่ใน .env — มี token ของ eDevice
 
 BU_TH_MAP = {
     'อมรินทร์ทีวี': 'AMTV', 'ออมนิเวิร์ส': 'AOMNI', 'สำนักพิมพ์': 'APUB',
@@ -4332,35 +4376,6 @@ def fetch_edevice_assets(force_live=False):
     return assets
 
 
-@app.route('/api/debug/mac-detail', methods=['GET'])
-def debug_mac_detail():
-    """Debug: ดู raw label-value pairs จาก MacintoshDetail.asp ของ Mac เครื่องแรก"""
-    import json as _json
-    try:
-        cid = request.args.get('cid', '')
-        cookies = _edevice_login()
-        if not cid:
-            # หา Mac ID แรกจาก Macintosh.asp
-            r = req_lib.get(EDEVICE_MAC_URL, cookies=cookies, timeout=15)
-            ids = re.findall(r"<OPTION value='([^']+)'>[^<]+</Option>",
-                             r.content.decode('tis-620', errors='replace'))
-            if not ids:
-                return jsonify({'error': 'ไม่พบ Mac ID ใน Macintosh.asp'})
-            cid = ids[0]
-        url = EDEVICE_MAC_DETAIL_URL.format(cid)
-        r2  = req_lib.get(url, cookies=cookies, timeout=12)
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(r2.content.decode('tis-620', errors='replace'), 'html.parser')
-        rows_out = []
-        for row in soup.find_all('tr'):
-            cells = [td.get_text(strip=True).replace('\xa0', ' ') for td in row.find_all('td')]
-            if cells:
-                rows_out.append(cells)
-        return jsonify({'cid': cid, 'url': url, 'rows': rows_out})
-    except Exception as e:
-        return jsonify({'error': str(e)})
-
-
 @app.route('/api/sync/edevice/skipped', methods=['GET'])
 def edevice_skipped():
     """สรุปเครื่องที่ fetch ไม่สำเร็จในรอบล่าสุด (แยกตามสาเหตุ)"""
@@ -4544,7 +4559,8 @@ def fetch_intranet_employees():
         host = INTRANET_URL.split('/')[2]
         try:
             ip = socket.gethostbyname(host)
-            raise RuntimeError(f'เชื่อมต่อ {host} ({ip}) ไม่สำเร็จ — เซิร์ฟเวอร์ปฏิเสธ connection: {e}')
+            app.logger.warning('Intranet connection error: %s', e)
+            raise RuntimeError(f'เชื่อมต่อ {host} ({ip}) ไม่สำเร็จ — เซิร์ฟเวอร์ปฏิเสธ connection')
         except socket.gaierror:
             raise RuntimeError(
                 f'DNS resolve "{host}" ไม่ได้ — เซิร์ฟเวอร์อาจต้องการ DNS/hosts ของ Intranet\n'
@@ -4553,7 +4569,8 @@ def fetch_intranet_employees():
     except req_lib.exceptions.Timeout:
         raise RuntimeError(f'Timeout เชื่อมต่อ Intranet ({INTRANET_URL}) — ตรวจสอบ network และ firewall')
     except req_lib.exceptions.HTTPError as e:
-        raise RuntimeError(f'HTTP Error จาก Intranet: {e}')
+        app.logger.warning('Intranet HTTP error: %s', e)
+        raise RuntimeError(f'Intranet ตอบกลับ HTTP {getattr(e.response, "status_code", "error")}')
     text = resp.content.decode('tis-620', errors='replace')
     soup = BeautifulSoup(text, 'html.parser')
 
@@ -4624,8 +4641,9 @@ def sync_preview():
         intranet_employees = fetch_intranet_employees()
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 503
-    except Exception as e:
-        return jsonify({'error': f'ไม่สามารถดึงข้อมูลจาก Intranet: {e}'}), 500
+    except Exception:
+        app.logger.exception('ดึงข้อมูลจาก Intranet ไม่สำเร็จ')
+        return jsonify({'error': 'ไม่สามารถดึงข้อมูลจาก Intranet (ดูรายละเอียดใน log)'}), 500
     intranet_map = { _norm(e['name']): e for e in intranet_employees }
 
     conn = get_db()
@@ -4705,8 +4723,9 @@ def sync_apply():
         intranet_employees = fetch_intranet_employees()
     except RuntimeError as e:
         return jsonify({'error': str(e)}), 503
-    except Exception as e:
-        return jsonify({'error': f'ไม่สามารถดึงข้อมูลจาก Intranet: {e}'}), 500
+    except Exception:
+        app.logger.exception('ดึงข้อมูลจาก Intranet ไม่สำเร็จ')
+        return jsonify({'error': 'ไม่สามารถดึงข้อมูลจาก Intranet (ดูรายละเอียดใน log)'}), 500
     intranet_map = { _norm(e['name']): e for e in intranet_employees }
 
     conn = get_db()
@@ -4794,8 +4813,12 @@ if __name__ == '__main__':
             # บอกให้ทุก Gunicorn worker ล้าง in-memory asset cache ทันที
             _invalidate_asset_cache()
         except Exception as e:
-            _ed_write_status({'running': False, 'done': False, 'error': str(e),
+            # RuntimeError = ข้อความที่เราเขียนเองให้ผู้ใช้อ่าน · อย่างอื่นซ่อนรายละเอียด ไว้ใน log
+            app.logger.exception('eDevice fetch ล้มเหลว')
+            _ed_write_status({'running': False, 'done': False,
+                              'error': str(e) if isinstance(e, RuntimeError)
+                                       else 'ดึงข้อมูล eDevice ไม่สำเร็จ (ดูรายละเอียดใน log)',
                               'count': 0, 'total': 0})
         sys.exit(0)
 
-    app.run(debug=True, port=5050)
+    app.run(debug=False, port=5050)   # ห้ามเปิด debug — Werkzeug debugger รันคำสั่งบน server ได้
