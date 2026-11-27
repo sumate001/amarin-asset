@@ -46,6 +46,15 @@ for i in $(seq 1 10); do
   if curl -fsS -o /dev/null "http://localhost:${PORT}/" 2>/dev/null; then
     echo "✅  deploy สำเร็จ — http://localhost:${PORT}"
     systemctl --user status "$SERVICE" --no-pager | head -5
+    # ---- 5. MCP server (AI) เรียก API นี้อยู่ — แค่ตรวจว่ายังตอบ ไม่ fail deploy ----
+    if systemctl --user is-enabled mcp-amarin-asset >/dev/null 2>&1; then
+      if curl -fsS -o /dev/null "http://127.0.0.1:${MCP_PORT:-5201}/health" 2>/dev/null; then
+        echo "🤖  MCP (mcp-amarin-asset) ตอบปกติ"
+      else
+        echo "⚠️   MCP (mcp-amarin-asset) ไม่ตอบ — รัน ~/mcp-servers/deploy.sh amarin-asset"
+      fi
+      echo "    ถ้าแก้/เพิ่ม API ที่ AI ใช้ อย่าลืมอัปเดต ~/mcp-servers/amarin-asset/server.py"
+    fi
     exit 0
   fi
   sleep 1

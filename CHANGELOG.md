@@ -2,6 +2,20 @@
 
 ---
 
+## [Unreleased] — 2026-11-27
+
+### Added
+- **AI Integration (MCP)** — MCP server `mcp-amarin-asset` (repo แยก `~/mcp-servers`, port 5201, Streamable HTTP + Bearer token)
+  ให้ local AI ภายในอ่านข้อมูลพนักงาน, asset, software, printer, eDevice sync ผ่าน API (ระยะที่ 1: อ่านอย่างเดียว, มี audit log)
+- `deploy.sh` เช็กว่า MCP server ยังตอบหลัง deploy และเตือนให้อัปเดต MCP เมื่อแก้ API
+
+### Changed
+- README: เขียนส่วน Deployment ใหม่ให้ตรงกับ production จริง (systemd user service `amarin-asset`, `.env`, backup ใน `backups/`)
+  และเพิ่ม Security note — API บน `0.0.0.0:5100` ไม่มี authentication
+- DEVGUIDE: อัปเดต architecture diagram / deployment pipeline และเพิ่ม §12 AI Integration — MCP Server
+
+---
+
 ## [1.4.1] — 2026-06-25
 
 ### Fixed

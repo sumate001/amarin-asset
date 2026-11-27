@@ -17,6 +17,7 @@
 9. [Production Architecture](#9-production-architecture)
 10. [การเพิ่ม Feature ใหม่](#10-การเพิ่ม-feature-ใหม่)
 11. [Pitfalls และข้อควรระวัง](#11-pitfalls-และข้อควรระวัง)
+12. [AI Integration — MCP Server](#12-ai-integration--mcp-server)
 
 ---
 
@@ -24,8 +25,9 @@
 
 ```
 Browser (SPA — Single Page App)
-  └── fetch() / polling ──→ Nginx (port 80)
-                                └── proxy_pass ──→ Gunicorn (port 5100, 3 workers)
+  └── fetch() / polling ──────────────────────→ Gunicorn (port 5100, 2 workers)
+Local AI (เครื่องอื่นใน LAN)                          ▲
+  └── MCP + Bearer ──→ mcp-amarin-asset (5201) ─┘ HTTP /api/* (อ่านอย่างเดียว)
                                                         └── Flask app.py
                                                               ├── SQLite employees.db
                                                               ├── eDevice Intranet (HTTP scraping)
@@ -493,24 +495,25 @@ server {
 
 ⚠️ **อย่ารัน CPU/parsing-heavy งานยาวใน thread ในตัว worker** — GIL อิ่มตัว worker ตอบ arbiter ไม่ทันแล้วถูก `SIGKILL` (timeout) งานแบบนี้ (เช่น eDevice fetch) ให้แยกเป็น **subprocess** ดู §8
 
-### Deployment Pipeline
+### Deployment Pipeline (production ปัจจุบัน)
+
+Production รันเป็น **systemd user service** บนเครื่อง `it-dashboard` (ไม่ได้ใช้ Nginx / `/opt` / `setup.sh`)
 
 ```bash
 # Developer
 git commit + git push → GitHub
 
-# Server (รัน setup.sh --update)
-git pull                   # จาก GitHub
-pip install -r requirements.txt
-systemctl restart amarin-employee
+# Server
+cd ~/amarin-asset && ./deploy.sh --pull        # pip install --user + restart amarin-asset + health check + เช็ก MCP
 
-# Nginx/systemd service file เปลี่ยน → ต้อง copy + reload ด้วยตัวเอง
-sudo cp deploy/amarin-employee.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart amarin-employee
+# แก้ service file (~/.config/systemd/user/amarin-asset.service)
+systemctl --user daemon-reload && ./deploy.sh
+
+# MCP server (repo แยก)
+cd ~/mcp-servers && ./deploy.sh --pull         # deps ใน .venv + copy service file + syntax check + restart + health check
 ```
 
-`setup.sh --update` ไม่ copy service/nginx file อัตโนมัติ ต้องทำเองถ้าแก้ไข
+`setup.sh` / `deploy/*.service` / Nginx config เป็นรูปแบบติดตั้งเดิมสำหรับเครื่องใหม่แบบ system-wide
 
 ---
 
@@ -644,3 +647,45 @@ browser จะใช้ของเก่าต่อไปอีก 7 วัน
 
 ไม่ได้เปิด WAL mode — ถ้ามี write load สูงขึ้น (หลาย user sync พร้อมกัน) อาจ lock  
 แก้ได้ด้วย `conn.execute("PRAGMA journal_mode=WAL")` ใน `get_db()`
+
+---
+
+## 12. AI Integration — MCP Server
+
+AI ภายในองค์กรเชื่อมต่อผ่าน MCP server ใน repo แยก **`~/mcp-servers`** (ดู `~/mcp-servers/README.md`)
+
+```
+mcp-servers/
+  common/base.py           Bearer auth, audit log, ตัดผลลัพธ์, รัน Streamable HTTP
+  amarin-asset/server.py   tools ของระบบนี้ (เรียก API :5100 เท่านั้น)
+  amarin-asset/.env        MCP_TOKEN, MCP_HOST/PORT, MCP_ALLOWED_HOSTS (ไม่อยู่ใน git)
+  deploy.sh
+```
+
+### เมื่อแก้ API ของแอปนี้
+
+MCP ผูกกับ **URL, query parameter และรูปแบบ JSON** ของ endpoint ต่อไปนี้ — ถ้าเปลี่ยนต้องแก้ `server.py` ด้วย:
+`/api/stats`, `/api/filters`, `/api/employees`, `/api/employees/<id>` (+ `/assets`, `/software`),
+`/api/assets`, `/api/dashboard/rental`, `/api/dashboard/software`, `/api/software/catalog`,
+`/api/software/catalog/<id>/holders`, `/api/printers`, `/api/sync/edevice/preview`
+
+เพิ่ม feature ใหม่ที่อยากให้ AI ใช้ได้ → เพิ่ม `@mcp.tool` ใน `server.py` แล้ว `~/mcp-servers/deploy.sh`
+(ฝั่ง AI client ต้อง reconnect / เริ่มแชทใหม่ถึงจะเห็น tool ใหม่)
+
+### Pitfalls ของ MCP
+
+- **ห้าม tool คืนค่าเป็น `list`** — SDK แตกเป็นหลาย content block และ client หลายตัว (เช่น Open WebUI)
+  อ่านแค่ block แรก → AI เห็นข้อมูลแค่รายการเดียว ให้ห่อเป็น `{'total': n, 'items': [...]}` เสมอ
+- **คุมขนาดผลลัพธ์** — local AI มี context เล็ก (และ SSE event จำกัด 1MB) ใช้ `truncate()` / `_shrink()`
+  ตัดเฉพาะฟิลด์ที่จำเป็น และใส่ `total` / `has_more` บอกจำนวนจริงทุกครั้ง
+- **คำถามเชิงจำนวนต้องมี tool นับจากข้อมูลทั้งหมด** (เช่น `count_assets`) — ถ้าไม่มี AI จะนับจากหน้าที่ถูกตัด
+- กฎธุรกิจที่ AI ต้องรู้ (เช่น ชื่อผู้ถือใช้ ชื่อ-สกุล ไม่ใช้ Username) ใส่ไว้ใน `INSTRUCTIONS` ของ server
+- mcp SDK เป็น **2.x** (`from mcp.server.mcpserver import MCPServer`) — ตัวอย่างบนเน็ตที่ใช้ `FastMCP` เป็น 1.x
+- เครื่องนี้ไม่มี `python3-venv` → venv สร้างแบบ `--without-pip` ติดตั้ง package ด้วย
+  `pip3 --python .venv/bin/python install ...` (deploy.sh ทำให้แล้ว)
+
+### แผนต่อไป
+
+ระยะที่ 2: tool แก้ไขข้อมูล — ต้องมีขั้น preview → confirm token, snapshot DB ลง `backups/` ก่อนเขียน
+และ audit ค่าก่อน/หลัง · ระยะที่ 3: งานอัตโนมัติ (เช่นสรุปผล sync eDevice รายวัน โดยไม่ apply เอง)
+

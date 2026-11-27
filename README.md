@@ -40,7 +40,8 @@
 | Backend | Python 3.10+ · Flask |
 | Database | SQLite (`employees.db`) |
 | Frontend | Vanilla JS · HTML5 · CSS3 (ไม่มี framework) |
-| Production | Gunicorn + Nginx + systemd (Linux) |
+| Production | Gunicorn + systemd user service (Linux) |
+| AI | MCP server (repo แยก `~/mcp-servers`) |
 | Data Sources | eDevice (Intranet), Google Sheets CSV, Amarin Intranet |
 
 ---
@@ -58,7 +59,7 @@ amarin-asset/
 ├── setup.sh                    # One-line installer + updater (Linux)
 ├── start.sh                    # Dev server
 ├── start-prod.sh               # Production server (Gunicorn)
-├── deploy.sh                   # Deploy คำสั่งเดียว (restart Gunicorn + deps + health check)
+├── deploy.sh                   # Deploy คำสั่งเดียว (restart service + deps + health check + เช็ก MCP)
 ├── install.py                  # Universal installer (macOS/Linux/Windows)
 ├── templates/
 │   └── index.html              # Single-page HTML
@@ -105,65 +106,94 @@ python app.py
 
 ## Deployment (Production)
 
+ระบบรันบนเครื่อง `it-dashboard` (10.7.255.227) เป็น **systemd user service** ของผู้ใช้ `sumate`
+(เปิด linger ไว้ จึง start เองตอน boot โดยไม่ต้อง login)
+
+| Service | Port | รายละเอียด |
+|---|---|---|
+| `amarin-asset` | 5100 | Gunicorn 2 workers · timeout 300s · `--preload` · unit: `~/.config/systemd/user/amarin-asset.service` |
+| `mcp-amarin-asset` | 5201 | MCP server ให้ AI ภายในเชื่อมต่อ (อ่านอย่างเดียว) · repo แยก `~/mcp-servers` — ดู [AI Integration (MCP)](#ai-integration-mcp) |
+
 ### 🚀 Deploy คำสั่งเดียว
 
-รัน `deploy.sh` บนเครื่อง server (รัน Gunicorn ตรง ไม่ผ่าน systemd):
-
 ```bash
-./deploy.sh           # deploy โค้ดใน working tree ปัจจุบัน (restart Gunicorn + ติดตั้ง deps + health check)
+./deploy.sh           # deploy โค้ดใน working tree (ติดตั้ง deps + restart service + health check)
 ./deploy.sh --pull    # git pull origin main ก่อน แล้วค่อย deploy
 ```
 
-ปรับค่าได้ผ่าน env: `PORT` (5100) · `WORKERS` (2) · `TIMEOUT` (300)
-สำหรับ setup ที่ใช้ **systemd** ให้ใช้ `sudo bash setup.sh --update` แทน (ดูด้านล่าง)
+หลัง deploy สคริปต์จะเช็กด้วยว่า MCP server ยังตอบปกติ (ไม่ทำให้ deploy fail)
+**ถ้าแก้ / เพิ่ม / เปลี่ยนรูปแบบ JSON ของ API ที่ AI ใช้** ต้องอัปเดต `~/mcp-servers/amarin-asset/server.py`
+แล้วรัน `~/mcp-servers/deploy.sh` ด้วย
 
-### Services ที่ติดตั้ง
-
-| Service | รายละเอียด |
-|---|---|
-| **Gunicorn** | 3 workers · timeout 300s · bind `127.0.0.1:5100` |
-| **Nginx** | reverse proxy port 80 → 5100 · gzip · static files cache 7d |
-| **systemd** | `amarin-employee.service` · auto-restart |
+ปรับ PORT / WORKERS / TIMEOUT: แก้ใน service file แล้ว `systemctl --user daemon-reload && ./deploy.sh`
 
 ### Commands
 
 ```bash
-# ดูสถานะ
-systemctl status amarin-employee
-
-# ดู logs realtime
-journalctl -u amarin-employee -f
-
-# Restart
-sudo systemctl restart amarin-employee
-
-# อัพเดทโค้ด
-sudo bash /path/to/setup.sh --update
+systemctl --user status amarin-asset          # สถานะ
+journalctl --user -u amarin-asset -f          # log ของ service
+tail -f gunicorn-error.log gunicorn-access.log
+systemctl --user restart amarin-asset         # restart อย่างเดียว (ไม่ติดตั้ง deps)
 ```
+
+### Configuration (`.env`)
+
+ค่าลับทั้งหมดอยู่ใน `.env` (ไม่อยู่ใน git) — copy จาก `.env.example`:
+`EDEVICE_USER`, `EDEVICE_PASS`, `EDEVICE_INIT_PATH`, `SHEETS_ID`, `SHEETS_SCRIPT_URL`
 
 ### Backup Database
 
+ก่อนแก้ข้อมูลจำนวนมาก (migration, ลบ/รวม software ฯลฯ) ให้ snapshot ไว้ใน `backups/`:
+
 ```bash
-# สำรอง
-cp /opt/amarin-employee/employees.db employees_backup_$(date +%Y%m%d).db
+cp employees.db backups/employees_$(date +%Y%m%d_%H%M%S)_before_<งาน>.db
 
 # Restore
-sudo cp employees_backup_20260622.db /opt/amarin-employee/employees.db
-sudo systemctl restart amarin-employee
+cp backups/<ไฟล์>.db employees.db && systemctl --user restart amarin-asset
 ```
+
+> `setup.sh` / `deploy/` (Nginx + `/opt/amarin-employee` + system service) เป็นรูปแบบติดตั้งเดิม
+> สำหรับเครื่องใหม่ — เครื่อง production ปัจจุบันไม่ได้ใช้
+
+### ⚠️ Security note
+
+Gunicorn bind `0.0.0.0:5100` และ **API ไม่มี authentication** — เครื่องใดใน LAN ก็เรียก `/api/*` ได้ตรง
+(ข้ามการตรวจ token ของ MCP) ควรจำกัดด้วย firewall ให้เฉพาะเครือข่ายที่ใช้งาน หรือเปลี่ยนเป็น bind
+`127.0.0.1` หลัง reverse proxy ที่มี auth
+
+---
+
+## AI Integration (MCP)
+
+AI ภายในองค์กรเชื่อมต่อผ่าน **MCP server** ที่ repo แยก `~/mcp-servers` (1 service = 1 MCP server)
+MCP server เรียก REST API ของแอปนี้เท่านั้น ไม่แตะ `employees.db` / Google Sheets โดยตรง
+
+```
+Local AI (เครื่องอื่นใน LAN) ──Bearer token──▶ mcp-amarin-asset :5201/mcp ──HTTP──▶ amarin-asset :5100/api/*
+```
+
+| | |
+|---|---|
+| Endpoint | `http://10.7.255.227:5201/mcp` (Streamable HTTP) |
+| Auth | `Authorization: Bearer <MCP_TOKEN>` — ค่าอยู่ใน `~/mcp-servers/amarin-asset/.env` |
+| สิทธิ์ | ระยะที่ 1: อ่านอย่างเดียว (12 tools) |
+| Audit log | `~/mcp-servers/amarin-asset/logs/amarin-asset-audit.log` — ทุก tool call |
+| Deploy | `~/mcp-servers/deploy.sh` |
+
+รายละเอียด tools, การตั้งค่า client (Open WebUI / LM Studio) และการเพิ่ม service ใหม่: `~/mcp-servers/README.md`
 
 ---
 
 ## Configuration
 
-ค่า config อยู่ต้นไฟล์ `app.py`:
+ค่าลับ (eDevice, Sheets) อ่านจาก `.env` — ดู [Configuration (.env)](#configuration-env) ส่วนค่าคงที่อื่นอยู่ต้นไฟล์ `app.py`:
 
 ```python
 DB        = 'employees.db'    # path ของ SQLite
 CACHE_TTL = 1800              # cache assets (วินาที, default 30 นาที)
 
 # Google Sheets (สัญญาเช่า)
-SHEETS_ID  = '1AVJbcZq-...'  # Spreadsheet ID
+SHEETS_ID  = os.environ.get('SHEETS_ID', '')  # จาก .env
 SHEETS_URL = f'https://docs.google.com/spreadsheets/d/{SHEETS_ID}/export?format=csv'
 
 # eDevice Intranet
